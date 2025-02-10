@@ -1,13 +1,11 @@
 # LSPS0 Transport Layer Specification
 
-## Name
-**transport**
+# LSPS0 Transport Layer
 
-## Version
-**1**
-
-## Status
-**Stable**
+| Name    | `transport`        |
+| ------- | ------------------ |
+| Version | 1                  |
+| Status  | Stable             |
 
 ## Motivation
 The transport layer describes how a client is able to request services from the LSP.
