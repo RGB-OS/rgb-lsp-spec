@@ -105,6 +105,43 @@ The client MUST call `lsps1.get_info` first.
 }
 ```
 
+**Response**
+
+```json
+{
+    "order_id": "66e42dba6afb292692ade4e7",
+    "status": "Pending",
+    "created_at": "2024-09-13T12:19:06.991Z",
+    "updated_at": "2024-09-13T12:19:06.991Z",
+    "lsp_balance_sat": 100000,
+    "channel_expiry_blocks": 12960,
+    "refund_on_chain_address": "02c9d1afd383fb651d93975d2a2e727aca5e6dd4fa2f090fded50102a149969ce8",
+    "public_key": "02c9d1afd383fb651d93975d2a2e727aca5e6dd4fa2f090fded50102a149969ce8@3dc0a5a72c2748e0bcd3b6c8fea9db9c.80c65b6183a949d1a642f5dd64a4f5e9.peers.thunderstack.org:12187",
+    "payment": {
+        "ln": {
+            "type": "ln",
+            "status": "Pending",
+            "fee": 251515,
+            "invoice": "lnbcrt2515150n1pn6k2y7dqud3jxktt5w46x7unfv9kz6mn0v3jsnp4qdh55vg4n3pgt2a635zue44w2tzl00ast96ks3jelxkq873zl3ljcpp5ft2zj96v64tya0c08evjq5dg5jxkkfwy4m5mnrg7p4j4tjk0znxssp530hy83x7gr6ldrawk0xe3rphz0uc9v7x8cpfequgnuq493t57uuq9qyysgqcqpcxqrpcgwnwlpmaq2lm24mjsef5sqtycpydl543a00jw2sthjtwgzdshfeunjs20uuj356ks6lhzrutcjyu9x6q38d244aafwpvxqc34jawxyzspxxn6zw",
+            "updated_at": "2025-02-11T10:38:22.138Z",
+            "created_at": "2025-02-11T10:38:22.138Z",
+            "expires_at": "2025-02-11T11:08:22.138Z"
+        },
+        "btc_onchain": {
+            "type": "btc_onchain",
+            "status": "Pending",
+            "fee": 251515,
+            "invoice": "bitcoin:bcrt1q36xg65c3wdj969f92f2wd0za30z3lzq0envx88?amount=0.00251515&label=67ab289d69711ad1f44aa8e6&message=Payment%20for%20order%3A%2067ab289d69711ad1f44aa8e6",
+            "updated_at": "2025-02-11T10:38:22.390Z",
+            "created_at": "2025-02-11T10:38:22.390Z",
+            "expires_at": "2025-02-11T11:38:22.390Z"
+        }
+    },
+    "channel": null
+}
+```
+
+
 ### 3. lsps1.get_order
 
 | JSON-RPC Method | lsps1.get_order |
