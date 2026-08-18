@@ -859,12 +859,47 @@ plus, while refresh is in progress, the previous epoch's package ([B-18]).
 
 ## 21. Covenant upgrade path
 
+### 21.1 Consensus covenants
+
 If CTV/CSFS-class covenants activate, both §3.2 weakenings are removable with the same economic design:
 
 - **Cosign removal.** Tree outputs become covenant-committed (`OP_CTV` template hashes) instead of n-of-n aggregates: users no longer need to participate in ceremonies to gain enforceable leaves; offline users can be *included* in new epochs.
 - **Expiry relaxation.** With non-interactive inclusion, refresh no longer requires the user, so expiry can lengthen substantially or be replaced by covenant-encoded rollover; the residual reason for expiry is operator capital recovery, a parameter choice rather than an enforcement boundary.
 
 **[B-55]** This document MUST NOT depend on covenant activation (per §7.1); this section records the upgrade so the deployment's migration story is auditable. Migration itself (coexistence of cosigned and covenant cohorts) is R-6.
+
+### 21.2 Committee mode: covenant emulation, deployable today (optional; closes R-5)
+
+The base design already emulates covenants by n-of-n pre-signing — with the *user* in every aggregate, which is what makes G1 self-enforcing and what creates both §3.2 weakenings. Committee mode substitutes, for leaves that opt into it, a **covenant-emulation committee** `C = {P_c1, …, P_cN}` of independent signers who cosign the tree in the user's stead and are trusted to sign nothing conflicting (equivalently: to have discarded their signing capability for those outputs). This is the recognized emulation-federation pattern (cf. Babylon's covenant committee, Liquid functionaries, BitVM signer sets), specified here as a per-user *opt-in* mode.
+
+**Parked leaves.** A user opts in at a refresh by converting their balance into a **parked (static) leaf**: no sub-channel, balance frozen, condition
+
+```text
+Key(U_i)  ∨  Agg({U_i, P_O})  ∨  CLTV(H_exp, Agg(C ∪ {P_O}))
+```
+
+— directly user-spendable after unroll (no commitment transaction, hence no user pre-signing needed at future epochs), cooperatively closable, and sweepable at expiry only by committee-plus-operator. Every ancestor aggregate and every expiry path on a parked path includes `C`. Sends from a parked leaf are impossible (no channel); receives accrue as `pending` (NG1) until the user returns and unparks into a normal leaf.
+
+**Roll-forward instead of forfeit-and-expire.** A parked claim never needs the user again: at the cohort's expiry, the operator and committee sweep the expired cohort output and, **in the same transaction**, re-commit every unexercised parked leaf at unchanged balance into the new cohort. Atomicity is by construction (one transaction spends the old root and funds the new); no forfeits exist for parked leaves because their balances cannot change. A dormant user therefore remains safe indefinitely — their exit package updates are unnecessary because the old package remains the enforceable one until a conforming roll-forward replaces it on-chain, at which point the committee (any honest member) withholds signatures from any sweep that fails to re-commit them.
+
+**Guarantee rescope (G1′).** For a parked claim, G1's "no key set excluding the user can conflict-spend" becomes: *a conflicting spend or a non-conforming sweep requires the unanimous collusion of all `N` committee members and the operator.* This is existential honesty — one honest committee member suffices — but it **is** a trust assumption where the base mode has none, and it rests on unverifiable non-signing (key/nonce discard cannot be proven). Wallets and deployments must present G1 and G1′ balances as distinct classes.
+
+**What committee mode buys and costs:**
+
+| | Base (self-covered) | Parked (committee-covered) |
+|---|---|---|
+| Trust | none — own key required | 1-of-N committee honest (unanimous collusion + operator to break) |
+| User liveness | cosign each refresh; `D_exit` deadline | none; indefinite dormancy |
+| Capital (§9.4) | 1× + parked receivables, 2× refresh floor | 1× exactly — roll-forward recycles the swept cohort directly |
+| Spendability | full (channel) | frozen until unpark; receives → pending |
+
+**Unplanned dormancy is not covered:** a self-covered user who silently disappears still faces the §14.4 deadline, because a live sub-channel balance cannot be given a static direct-spend path without enabling stale-state enforcement. Parking is for *planned* dormancy; the mitigation for unplanned loss of liveness remains the [B-52] alarms and auto-exit.
+
+**[B-59]** Committee mode is OPTIONAL and strictly per-user, per-refresh opt-in. A deployment offering it MUST disclose the committee's membership, size `N`, and the G1′ trust model; Clients MUST display parked (G1′) and self-covered (G1) value as distinct classes and MUST NOT park a balance without explicit user consent.
+
+**[B-60]** Parked leaves MUST be grouped in dedicated cohorts or subtrees so that committee-inclusive expiry paths never govern self-covered value. A roll-forward sweep MUST spend the expired cohort output and re-commit every unexercised parked balance, unchanged, in the same transaction; committee members MUST sign no spend of committee-covered outputs other than ceremony trees and conforming roll-forwards.
+
+**[B-61]** The committee aggregate MUST be n-of-n (threshold schemes reduce theft to `t`-collusion and are forbidden for this role). A wedged committee halts new epochs and roll-forwards only: users retain their pre-signed unilateral exit paths, and deployments MUST size committee-rotation and exit arrangements so that a wedge degrades to mass exit, never to loss.
 
 ---
 
@@ -891,7 +926,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 | R-2 | Exit cost and capital models per deployment | **Parameter-freeze blocker** | Published models per [B-47] and [B-58]; `R_min` derived from the former; reserve multiple `D` and redemption float from the latter |
 | R-3 | Consignment growth / checkpointing | No (bounded by [B-44] disclosure) | Published size envelope; pruning design or sharding schedule keeping worst-case exit validation under a stated budget |
 | R-4 | Ceremony transport & session protocol | No (any transport meeting [B-11]/[B-13] ordering works) | Message-level spec with replay/DoS handling; restart-with-fresh-nonces verified |
-| R-5 | Delegated refresh | No (mitigates A4, doesn't replace it) | Delegate can execute refresh without spending capability over user funds; failure mode = no refresh (falls back to `D_exit` exit) |
+| R-5 | Delegated refresh | **Closed — resolved by §21.2** | Committee-mode parking refreshes (rolls forward) a dormant user's claim with no user participation; no individual delegate gains spending capability (breaking a parked claim requires unanimous committee + operator collusion, [B-61]); failure mode is no roll-forward with unilateral exit preserved. Residual: unplanned dormancy of self-covered users remains subject to the §14.4 deadline, mitigated by [B-52] alarms/auto-exit |
 | R-6 | Covenant migration | No | Coexistence plan per §21 |
 
 **[B-57]** A deployment MUST NOT represent itself as conforming to this specification while R-1 or R-2 is unmet.
@@ -902,9 +937,9 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 
 All MUST-level requirements by conformance target. Requirement B-46 carries only SHOULD force and is therefore intentionally absent here; it remains normative guidance in §16.2.
 
-**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48.
+**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent).
 
-**Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58.
+**Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58, B-60, B-61 (B-60/B-61 additionally bind committee members in deployments offering §21.2).
 
 **Client:** B-02, B-03, B-12, B-14, B-16, B-18, B-28, B-29, B-37, B-49, B-50, B-51, B-52, B-53, B-54.
 
