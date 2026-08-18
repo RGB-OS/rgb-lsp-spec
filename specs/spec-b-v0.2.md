@@ -409,7 +409,34 @@ Canonical USDT received by the operator mid-epoch (e.g. inbound canonical routin
 
 ### 9.3 One transaction per epoch
 
-The on-chain cost of the partitioned-epoch design (F2 disposition) is exactly one confirmed transaction per epoch plus, eventually, one expiry sweep per cohort — independent of cohort size. Epoch cadence is an operator policy trade-off between capital lockup (a cohort's `A_N` plus BTC is committed until its expiry) and settlement latency for pending balances; see §19.
+The on-chain cost of the partitioned-epoch design (F2 disposition) is exactly one confirmed transaction per epoch plus, eventually, one expiry sweep per cohort — independent of cohort size. Epoch cadence is an operator policy trade-off between capital lockup (a cohort's `A_N` plus BTC is committed until its expiry) and settlement latency for pending balances; the resulting capital requirements are made explicit in §9.4.
+
+### 9.4 Operator capital model
+
+*(The offline-user guarantee (F2 disposition) is paid for in operator capital; this subsection makes that price explicit and auditable.)*
+
+**Reserve multiplier.** Because old cohort outputs persist untouched until their expiry (§14.5), a refreshing user's value is committed **twice** during the overlap: fresh USDT funds their new leaf while their forfeited old leaf stays locked in the old cohort. With epoch cadence `W_refresh` and expiry window `W_exp`, up to `D ≈ W_exp / W_refresh` cohorts are unexpired simultaneously, so:
+
+```text
+USDT_locked ≈ Σ_{unexpired N} A_N ≈ D × (average cohort settled total + receive headroom)
+```
+
+Under the §19 recommended defaults (weekly epochs, ~6-month expiry), `D ≈ 26`. The steering levers are: shorter `W_exp` (cheaper capital, heavier user liveness burden per §14.4), slower cadence (cheaper capital, larger outstanding `pending`), per-user refresh throttling (only refreshing users duplicate), and early reclamation below. Note the full-reserve property is not a lever: G2/T5 make every cohort provably backed at cosign time, so no fractional reserve over settled balances is constructible.
+
+**Early reclamation.** The operator MAY unilaterally unroll an old cohort's tree and broadcast the connector-bound forfeits of refreshed leaves to recover their capital before expiry. All transactions involved are pre-signed and conflict with no honest user's path (§10.4, formal companion L1/T6); unforfeited leaves remain untouchable until `H_exp` regardless. This trades O(cohort size) on-chain fees for released capital and is rational whenever the capital cost of waiting exceeds the fee cost.
+
+**Redemption-side float.** Settled redemption via unilateral exit consumes **no** operator liquidity — the USDT is already in the cohort output, so settled balances are structurally run-proof: a simultaneous mass exit is linear in cohort size (§16.3) and cannot fail for lack of funds (T5/T6). Cooperative redemption (§11.7), by contrast, is paid from the operator's *unlocked* float, and what the operator receives in exchange — the increase of its in-leaf share `ω` — is a receivable locked until the user's exit, a cooperative close, early reclamation, or the cohort's expiry. The float must therefore cover, over the capital-recovery horizon:
+
+```text
+Float ≈ peak of [ cooperative redemptions
+                + new-epoch commitments settling pending
+                − inbound canonical receipts
+                − recovered exits / forfeits / sweeps ]
+```
+
+Pending settlement (refresh) is backed operationally by the inbound canonical flow that created the pending, never structurally — exactly NG1, which is why `pending` is capped (I3, T7). If the float is exhausted, cooperative flows stall and users degrade to unilateral exit: fees and delay, never loss of settled principal (§17.6-style graceful degradation).
+
+**[B-58]** A deployment MUST publish, alongside the [B-47] exit-cost model, an operator capital model stating: the projected overlap factor `D` and locked-reserve multiple, the redemption-float sizing and its recovery horizon, the early-reclamation policy, and the caps `P_max`/`X_global` in force. This model is part of the audit surface.
 
 ---
 
@@ -751,7 +778,7 @@ Before `H_exp`, the operator's only capabilities on tree outputs are the cosigne
 | Leaf BTC value | `btc_leaf` | all downstream outputs standard | 10,000 sat |
 | Connector value | — | ≥ dust for its type | 330 sat |
 | Pending cap | `P_max` | client policy | 10% of `R_settled` or a fixed fiat-equivalent floor, whichever is greater |
-| Refresh cadence | — | operator policy; SHOULD keep median `pending` small | weekly epochs |
+| Refresh cadence | `W_refresh` | operator policy; SHOULD keep median `pending` small; drives the §9.4 reserve multiplier `D ≈ W_exp / W_refresh` | weekly epochs |
 
 **[B-49]** Clients MUST allow the user to override policy values (`P_max`, alarm thresholds) but MUST NOT allow silently disabling the `D_exit` alarm; automatic exit at `D_exit` is RECOMMENDED as default-on, with explicit user override permitted.
 
@@ -828,7 +855,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 | ID | Item | Blocking? | Acceptance criterion |
 |---|---|---|---|
 | R-1 | D-VS instantiation (virtual seals) | **Launch blocker** | A concrete RGB construction with a security argument that VS-1..VS-4 hold; independent audit; interop test: full ceremony + adversarial exit on signet |
-| R-2 | Exit cost model per deployment | **Parameter-freeze blocker** | Published model per [B-47]; `R_min` derived from it |
+| R-2 | Exit cost and capital models per deployment | **Parameter-freeze blocker** | Published models per [B-47] and [B-58]; `R_min` derived from the former; reserve multiple `D` and redemption float from the latter |
 | R-3 | Consignment growth / checkpointing | No (bounded by [B-44] disclosure) | Published size envelope; pruning design or sharding schedule keeping worst-case exit validation under a stated budget |
 | R-4 | Ceremony transport & session protocol | No (any transport meeting [B-11]/[B-13] ordering works) | Message-level spec with replay/DoS handling; restart-with-fresh-nonces verified |
 | R-5 | Delegated refresh | No (mitigates A4, doesn't replace it) | Delegate can execute refresh without spending capability over user funds; failure mode = no refresh (falls back to `D_exit` exit) |
@@ -844,7 +871,7 @@ All MUST-level requirements by conformance target. Requirement B-46 carries only
 
 **Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48.
 
-**Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57.
+**Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58.
 
 **Client:** B-02, B-03, B-12, B-14, B-16, B-18, B-28, B-29, B-37, B-49, B-50, B-51, B-52, B-53, B-54.
 
