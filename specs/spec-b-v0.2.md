@@ -456,6 +456,10 @@ Reclamation cost is on-chain fees only — unrolling a cohort is O(cohort size) 
 
 **Financing cost, not solvency risk.** Parked receivables are illiquid but certain: the forfeits are the operator's unilaterally enforceable pre-signed right, and the expiry sweep is consensus-guaranteed. The operator's true cost is therefore working-capital financing, `(multiple − 1) × refreshing-TVL × cost of capital`, traded against reclamation fees and against the `pending` growth that slower refresh cadence causes. The remaining levers: shorter `W_exp` (cheaper capital, heavier user liveness burden per §14.4) and per-user refresh throttling.
 
+**Full-cohort rollover (optional optimization).** When **every** member of cohort `N` participates in the refresh into `N+1`, the transition MAY be executed as a *rollover*: the epoch transaction `E_{N+1}` takes the old cohort output `O_N` itself as an input, cosigned by the full old aggregate `S_N ∪ {O}` during the same ceremony. This recycles the old cohort's capital atomically — no duplication, no transient 2×, and **no forfeits or connectors are needed for that transition**, because every old claim's root input is spent by the very transaction that activates the new claims (supersession by conflict, enforced by consensus rather than by operator watch). If any member is absent, the transition MUST fall back to the standard partitioned epoch of §8–§9. Sharding cohorts by activity level makes the all-online case common for active users, taking their steady-state cost toward 1×.
+
+**[B-62]** In a rollover, the signature over the `O_N` input plays the role of the forfeit and MUST be governed by the same ordering discipline: a Client MUST NOT sign the spend of `O_N` before completing stage-4 verification of its full `N+1` package ([B-12]/[B-14] applied verbatim), and the operator MUST NOT broadcast `E_{N+1}` without the complete old-aggregate signature (partial rollovers are forbidden — it is all of `S_N` or the §8–§9 fallback). Leaf commitments retain `Δ_leaf` unconditionally ([B-08]), since a cohort cannot know at construction time whether its *next* transition will qualify for rollover.
+
 **Early reclamation.** The operator MAY unilaterally unroll an old cohort's tree and broadcast the connector-bound forfeits of refreshed leaves to recover their capital before expiry. All transactions involved are pre-signed and conflict with no honest user's path (§10.4, formal companion L1/T6); unforfeited leaves remain untouchable until `H_exp` regardless. This trades O(cohort size) on-chain fees for released capital and is rational whenever the capital cost of waiting exceeds the fee cost.
 
 **Redemption-side float.** Settled redemption via unilateral exit consumes **no** operator liquidity — the USDT is already in the cohort output, so settled balances are structurally run-proof: a simultaneous mass exit is linear in cohort size (§16.3) and cannot fail for lack of funds (T5/T6). Cooperative redemption (§11.7), by contrast, is paid from the operator's *unlocked* float, and what the operator receives in exchange — the increase of its in-leaf share `ω` — is a receivable locked until the user's exit, a cooperative close, early reclamation, or the cohort's expiry. The float must therefore cover, over the capital-recovery horizon:
@@ -895,6 +899,21 @@ Key(U_i)  ∨  Agg({U_i, P_O})  ∨  CLTV(H_exp, Agg(C ∪ {P_O}))
 
 **Unplanned dormancy is not covered:** a self-covered user who silently disappears still faces the §14.4 deadline, because a live sub-channel balance cannot be given a static direct-spend path without enabling stale-state enforcement. Parking is for *planned* dormancy; the mitigation for unplanned loss of liveness remains the [B-52] alarms and auto-exit.
 
+**Capital efficiency of committee mode.** Parked value costs the operator essentially zero own capital: the 1× backing is the user's own frozen balance, the roll-forward recycles the swept cohort in one transaction (no fronting, no receivables, no transient 2×), and the operator's only cost is the roll-forward fee once per `W_exp`, amortized across the parked cohort. Active (self-covered) value is deliberately untouched — its §9.4 economics apply unchanged. The blended requirement is therefore:
+
+```text
+LSP_own ≈ (multiple − 1) × active TVL  +  0 × parked TVL  +  redemption float + headroom
+```
+
+| Population mix | LSP own capital vs total TVL |
+|---|---|
+| 100% active at the 2× dial (base mode) | ~1.0× |
+| 50% parked / 50% active at 2× | ~0.5× |
+| 80% parked / 20% active at 1.5× | ~0.10× |
+| Consensus covenants (§21.1), everything | ~0 (fees + float only) |
+
+Since real balance populations are dormancy-heavy, a committee-mode deployment operates in the ~0.1–0.5× regime — matching covenant-based Ark-class economics for the dormant majority, with active users paying the working-capital premium only while transacting. Second-order gain: because expiry is invisible to parked users and active users refresh frequently anyway, `W_exp` can be shortened without user burden, which caps the active side's `min(T_reclaim, W_exp)` receivable window and compresses the active multiple further. Combined with full-cohort rollover for active cohorts (§9.4), steady-state capital approaches 1× of TVL system-wide, nearly all of it user-funded backing. The [B-58] capital model MUST reflect the parked/active split when committee mode is offered.
+
 **[B-59]** Committee mode is OPTIONAL and strictly per-user, per-refresh opt-in. A deployment offering it MUST disclose the committee's membership, size `N`, and the G1′ trust model; Clients MUST display parked (G1′) and self-covered (G1) value as distinct classes and MUST NOT park a balance without explicit user consent.
 
 **[B-60]** Parked leaves MUST be grouped in dedicated cohorts or subtrees so that committee-inclusive expiry paths never govern self-covered value. A roll-forward sweep MUST spend the expired cohort output and re-commit every unexercised parked balance, unchanged, in the same transaction; committee members MUST sign no spend of committee-covered outputs other than ceremony trees and conforming roll-forwards.
@@ -937,7 +956,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 
 All MUST-level requirements by conformance target. Requirement B-46 carries only SHOULD force and is therefore intentionally absent here; it remains normative guidance in §16.2.
 
-**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent).
+**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast).
 
 **Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58, B-60, B-61 (B-60/B-61 additionally bind committee members in deployments offering §21.2).
 
