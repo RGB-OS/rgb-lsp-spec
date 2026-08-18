@@ -7,6 +7,7 @@ This repository contains the protocol specification for a self-custodial virtual
 | Document | Status | Description |
 |---|---|---|
 | [`specs/spec-b-v0.2.md`](specs/spec-b-v0.2.md) | **Draft v0.2 — prepared for external audit** | The current specification. Feature-complete: output/key model, epoch ceremony, settlement trees, leaf sub-channels, forfeit layer, expiry/refresh, RGB virtual-seal dependency contract, fee/exit-cost requirements, formal invariants and proof sketches, parameters, conformance checklist. |
+| [`specs/spec-b-v0.2-formal.md`](specs/spec-b-v0.2-formal.md) | **Formal companion to v0.2** | Mathematical model and complete proofs: ledger/signature/asset axioms (AX-\*), spend-enumeration lemma L1, theorems T1–T8 (exclusivity, exit achievability with deadline arithmetic, refresh atomicity, rollback unprofitability, conservation, outcome completeness, credit bounds, expiry-bounded capability), realizability propositions P1–P2, and an explicit list of what is *not* proven. |
 | [`specs/archive/spec-b-v0.1.md`](specs/archive/spec-b-v0.1.md) | Superseded | Research Draft v0.1 (original architecture sketch). |
 | [`specs/archive/spec-b-v0.1-soundness-review.md`](specs/archive/spec-b-v0.1-soundness-review.md) | Archival | Soundness review of v0.1 (findings F1–F12). Every finding's disposition is implemented in v0.2; see v0.2 §25 for the mapping. |
 
@@ -14,7 +15,7 @@ This repository contains the protocol specification for a self-custodial virtual
 
 1. v0.2 §1–§3 — scope, notation, and the exact (rescoped) guarantee with its stated boundary.
 2. v0.2 §7–§14 — the mechanism: outputs, ceremony, tree, leaf sub-channels, forfeits, expiry.
-3. v0.2 §18 — security properties G1–G5 with proof sketches and the assumptions each uses.
+3. v0.2 §18 — security properties G1–G5 with proof sketches — then the formal companion for the complete proofs: L1/T6 establish that the reachable outcome space is exactly the six intended dispositions (no unexpected behaviors), T2/P1/P2 establish that every operation and guarantee is achievable, and §9 of the companion states exactly what remains unproven (the AX-VS dependency and the empirical fee constants).
 4. v0.2 §23 — the R&D register; items R-1 (RGB virtual seals) and R-2 (exit cost model) are explicit launch/parameter-freeze blockers and are the only open dependencies.
 5. The v0.1 review, cross-checking that each finding's disposition (v0.2 §25) is in fact discharged.
 

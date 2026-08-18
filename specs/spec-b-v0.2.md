@@ -573,10 +573,10 @@ The user-facing deadline for *starting* a unilateral exit from epoch `N` is:
 
 ```text
 D_exit^N = H_exp^N − M
-M ≥ depth · T_conf + Δ_leaf + Δ_rev + T_conf + B          (all in blocks)
+M ≥ depth · T_conf + Δ_leaf + Δ_rev + 2 · T_conf + B      (all in blocks)
 ```
 
-with `depth = ⌈log_r |S_N|⌉` unroll confirmations at target `T_conf` each, the leaf commitment delay, the to-holder claim delay, one final claim confirmation, and buffer `B` for fee spikes and reorgs (≥ `k`). **[B-39]** Deployments MUST publish `M` (with the parameter set, §19) and Clients MUST treat `D_exit` as the hard deadline: a user who has not refreshed by `D_exit` MUST begin unilateral exit (subject to the user override in [B-49]).
+with `depth = ⌈log_r |S_N|⌉` unroll confirmations at target `T_conf` each, the leaf commitment delay `Δ_leaf` followed by one commitment confirmation, the to-holder claim delay `Δ_rev` followed by one claim confirmation, and buffer `B` for fee spikes and reorgs (≥ `k`). (Deadline sufficiency is proven as Corollary T2.1 of the formal companion.) **[B-39]** Deployments MUST publish `M` (with the parameter set, §19) and Clients MUST treat `D_exit` as the hard deadline: a user who has not refreshed by `D_exit` MUST begin unilateral exit (subject to the user override in [B-49]).
 
 ### 14.5 Expiry sweep
 
@@ -699,7 +699,7 @@ Any pre-broadcast abort leaves all prior epochs untouched ([B-10]). An operator 
 
 ## 18. Security properties and proof sketches
 
-Statements hold against the §4.6 adversary under A1–A7 (with each property's actually-used subset noted).
+Statements hold against the §4.6 adversary under A1–A7 (with each property's actually-used subset noted). These are sketches for readability; the full mathematical model and complete proofs — including the spend-enumeration lemma, refresh-atomicity theorem, outcome-completeness theorem ("no unexpected reachable outcomes"), and realizability propositions — are in the formal companion, [`spec-b-v0.2-formal.md`](spec-b-v0.2-formal.md). Where sketch and companion differ, the companion governs.
 
 ### 18.1 G1 — Settled-claim safety (uses A1, A2, A3, A5, A6)
 
@@ -742,7 +742,7 @@ Before `H_exp`, the operator's only capabilities on tree outputs are the cosigne
 | Max cohort size | `N_max` | ceremony completes within construction window; MuSig2 session count O(N·log N) | 1,024 per cohort (shard above) |
 | Epoch expiry window | `W_exp` | `H_exp − H_N ≥ W_exp`; `W_exp > 2M` | 26,208 blocks (~6 months) |
 | Exit safety margin | `M` | formula §14.4 | 2,016 blocks (~2 weeks) |
-| Leaf commitment delay | `Δ_leaf` | sized for adversarial congestion; `≥ k` | 288 blocks |
+| Leaf commitment delay | `Δ_leaf` | `≥ max(k, T_conf)`; sized for adversarial congestion | 288 blocks |
 | Revocation delay | `Δ_rev` | ≥ 144 | 144 blocks |
 | Activation depth | `k` | ≥ 6 | 6 |
 | Confirmation target | `T_conf` | per A6 envelope | 36 blocks |
