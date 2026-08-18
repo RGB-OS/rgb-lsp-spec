@@ -36,6 +36,7 @@
 23. [Open items and R&D register](#23-open-items-and-rd-register)
 24. [Conformance checklist](#24-conformance-checklist)
 25. [Changelog and findings disposition](#25-changelog-and-findings-disposition)
+- [Appendix A — Non-normative Q&A](#appendix-a--non-normative-qa)
 
 ---
 
@@ -876,3 +877,52 @@ An implementation claiming conformance MUST list any deviation from this checkli
 2. Claims expire; refresh-or-exit liveness before `D_exit` is required (§3.2.2).
 
 Both are the boundary of pre-signed-transaction enforcement on Bitcoin without covenants; §21 records their removal path.
+
+---
+
+## Appendix A — Non-normative Q&A
+
+*This appendix is explanatory only. It introduces no requirements; where it appears to conflict with §1–§25 or the formal companion, those govern. Each answer cites the normative text it summarizes.*
+
+### A.1 — "I hold a pre-signed exit. If my Lightning balance changes, doesn't the stale exit let me double-spend?"
+
+It would, if the exit were a static pre-signed amount — that is exactly v0.1's send-then-exit gap (review finding F4). v0.2 closes it with three layers:
+
+1. **The redemption right is a channel, not a number (§11).** The pre-signed tree only reaches your *leaf output*, a 2-of-2 sub-channel with the operator. What you can exit with is the **latest signed leaf state**, updated with LN-penalty mechanics, not the leaf's face value.
+2. **Lightning state and leaf state move in lockstep, per payment ([B-26]/[B-28]).** The operator does not irrevocably commit your outgoing HTLC until you have completed a leaf-state decrease to your post-send balance. By the time a send is final, your redemption right has already shrunk. Receives are the mirror image: the leaf state is raised afterward, and until then the delta is `pending` — your credit exposure, not a double-spend opportunity.
+3. **Publishing stale state loses money (§11.4, §13; Theorem T4).** A revoked leaf *state* is swept in full by the counterparty's penalty path within `Δ_rev`; a forfeited whole *leaf* from a refreshed epoch is taken in full by the operator's connector-bound forfeit, which wins the race because commitments carry a `Δ_leaf` delay the forfeit lacks ([B-08]).
+
+Caveat, stated rather than hidden: layers 2–3 protect the **operator** only while it (or its watchtower) watches the chain (A7). A failed watch enriches the double-spender at the operator's expense only — never another user's (§10.4, T4(i)) — and never weakens your own exit, since a disappeared operator cannot have superseded your latest state (§13.4).
+
+### A.2 — "How do I redeem? Do I bring vUSDT to get canonical USDT?"
+
+vUSDT is not a redemption ticket; the right lives in your cosigned leaf state, not in the token ([B-04], NG4). Two paths:
+
+- **Cooperative (operator online, §11.7).** Works like an ordinary Lightning payment *to* the operator: you pay `x` vUSDT back across your channel (leaf state decreasing in lockstep, [B-26]) and the operator delivers `x` canonical USDT — an on-chain RGB transfer to your invoice, or canonical USDT routed over Lightning. Nothing is "burned"; the balance simply moves back to the operator's side. Cooperative redemption can cover your full `R_current`, including pending.
+- **Unilateral (operator gone or refusing; §16.3, Theorem T2).** You bring nothing and ask no one: broadcast the exit package — unroll, wait `Δ_leaf`, latest commitment, wait `Δ_rev`, claim — and receive exactly `R_settled` canonical USDT. No vUSDT changes hands because the accounting already happened continuously at each send.
+
+Leftover vUSDT in your channel after an exit is inert: any further send would require a leaf-state decrease ([B-26]) against a leaf that is now spent on-chain, so it cannot be double-used. Force-closing the overlay channel recovers its BTC; the vUSDT allocation itself carries no claim beyond the one just exercised. The `R_settled` vs `R_current` asymmetry is why clients keep `pending` small ([B-29]).
+
+### A.3 — "What happens to my pending balance if the operator disappears mid-refresh?"
+
+Never worse than the moment before the refresh began — this is Theorem T3 (refresh atomicity) traced through the ceremony stages (§8.2):
+
+| Operator vanishes… | Your position |
+|---|---|
+| during stages 1–3 (construct/validate/tree-sign) | Nothing enforceable was created ([B-10]); old claim intact, exit with old `R_settled`; pending lost (NG1, as always) |
+| after stage 4 (you hold the verified new package) but before your forfeit | New package's epoch will never confirm — worthless but harmless; old claim intact |
+| after your forfeit (stage 5) but before `E_{N+1}` broadcast | The forfeit spends `E_{N+1}`'s connector ([B-33]); with `E_{N+1}` unconfirmed it is permanently unenforceable — old claim intact |
+| after `E_{N+1}` confirms | The refresh **succeeded**: your new initial leaf state equals your full snapshot `R_current` (§14.2), so pending became settled; exit the new leaf with everything |
+
+The amount at risk mid-refresh is therefore exactly your pending as of the *old* state — the same exposure as before the refresh started. A refresh can only succeed or leave you where you were; there is no interleaving in which you surrendered the old claim without holding an enforceable new one.
+
+### A.4 — "What limits leaf state transitions? In Lightning I can update indefinitely."
+
+Update *count* is unlimited here too — leaf updates are ordinary off-chain LN-penalty updates (§11.3). The bounds are structural, not numerical:
+
+- **Amplitude.** `u` moves freely within `[0, ℓ(i)]`, but leaf capacity is frozen per epoch: tapret commitments are fixed at signing, so a leaf cannot be resized in place (§15.3). Receives beyond capacity accumulate as pending until refresh; resizing means joining the next epoch.
+- **Lifetime.** Every state dies at `H_exp`; refresh-or-exit by `D_exit` (§14.4). Vanilla LN channels live indefinitely; leaves do not — this is the honest weakening §3.2(2).
+- **Shape.** Balance-only, no HTLC outputs (§12), so a leaf cannot route; all HTLC mechanics live in the overlay vUSDT channel, coupled to the leaf by [B-26] at one extra half-round per send.
+- **Cooperation.** Every update needs the operator's signature, exactly as every LN update needs your peer's; refusal is a liveness risk (NG2) whose remedy is unilateral exit with the last completed state.
+
+Mental model: a leaf is a Lightning channel in every off-chain respect, mounted on an unconfirmed funding output with a fixed size and an expiry date, delegating routing to the channel above it.
