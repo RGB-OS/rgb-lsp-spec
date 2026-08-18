@@ -436,7 +436,25 @@ gross USDT locked = 1 × TVL_settled      live backing: every settled claim in e
 | ~monthly | ~monthly | ~2× |
 | no refresh (dormant) | — | 1× |
 
-**Financing cost, not solvency risk.** Parked receivables are illiquid but certain: the forfeits are the operator's unilaterally enforceable pre-signed right, and the expiry sweep is consensus-guaranteed. The operator's true cost is therefore working-capital financing, `(multiple − 1) × refreshing-TVL × cost of capital`, traded against the on-chain fees of reclaiming more aggressively and against the `pending` growth that slower refresh cadence causes. The steering levers: shorter `W_exp` (cheaper capital, heavier user liveness burden per §14.4), per-user refresh throttling, and the reclamation schedule below.
+**Whose money each term is.** The 1× live backing is economically **user-funded**: it entered as the users' own inbound canonical flow, held briefly as float and committed into their leaves — the operator's net position in it is ≈ 0 (plus any receive-headroom overprovision, which is operator capital). The parked receivables, by contrast, are entirely the **operator's own working capital**: each refresh fronts a fresh copy of the user's balance while the previous copy waits out the reclamation lag. Operator-own liquidity requirement:
+
+```text
+LSP_own ≈ (gross multiple − 1) × refreshing TVL  +  redemption float  +  headroom
+```
+
+**The capital dial.** The gross multiple is an operating point the operator chooses, not a property of the design. Per `$1,000` of refreshing user balance:
+
+| Operating point | LSP own capital per $1,000 TVL |
+|---|---|
+| Aggressive reclamation (≈ per-epoch), or refresh throttled to ≈ reclamation cadence | ≈ $1,000 |
+| Weekly refresh, monthly reclamation (the 5× row) | ≈ $4,000 |
+| Lazy corner (weekly refresh, wait for expiry) | ≈ $26,000 — not a sane operating point |
+
+Reclamation cost is on-chain fees only — unrolling a cohort is O(cohort size) transactions **shared across the whole cohort** (per-user cost: a few hundred to a few thousand sats), and reclaimed outputs feed directly as inputs into the next epoch transaction, so capital velocity equals reclamation cadence. For any deployment with meaningful TVL, fees are far cheaper than multiples of working capital, so the rational equilibrium sits near the 1–2× end.
+
+**The structural floor.** The multiple cannot reach exactly 1×: during every refresh overlap there is necessarily a moment of 2× per refreshing user, because the new leaf must be funded before the old leaf becomes reclaimable. This floor is the direct capital cost of the offline-user guarantee ("old claims stay valid until replaced", the F2 disposition) and is irreducible without covenants (§21).
+
+**Financing cost, not solvency risk.** Parked receivables are illiquid but certain: the forfeits are the operator's unilaterally enforceable pre-signed right, and the expiry sweep is consensus-guaranteed. The operator's true cost is therefore working-capital financing, `(multiple − 1) × refreshing-TVL × cost of capital`, traded against reclamation fees and against the `pending` growth that slower refresh cadence causes. The remaining levers: shorter `W_exp` (cheaper capital, heavier user liveness burden per §14.4) and per-user refresh throttling.
 
 **Early reclamation.** The operator MAY unilaterally unroll an old cohort's tree and broadcast the connector-bound forfeits of refreshed leaves to recover their capital before expiry. All transactions involved are pre-signed and conflict with no honest user's path (§10.4, formal companion L1/T6); unforfeited leaves remain untouchable until `H_exp` regardless. This trades O(cohort size) on-chain fees for released capital and is rational whenever the capital cost of waiting exceeds the fee cost.
 
