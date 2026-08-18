@@ -415,13 +415,28 @@ The on-chain cost of the partitioned-epoch design (F2 disposition) is exactly on
 
 *(The offline-user guarantee (F2 disposition) is paid for in operator capital; this subsection makes that price explicit and auditable.)*
 
-**Reserve multiplier.** Because old cohort outputs persist untouched until their expiry (§14.5), a refreshing user's value is committed **twice** during the overlap: fresh USDT funds their new leaf while their forfeited old leaf stays locked in the old cohort. With epoch cadence `W_refresh` and expiry window `W_exp`, up to `D ≈ W_exp / W_refresh` cohorts are unexpired simultaneously, so:
+**Reserve decomposition: backing vs parked receivables.** Two quantities must not be conflated:
 
 ```text
-USDT_locked ≈ Σ_{unexpired N} A_N ≈ D × (average cohort settled total + receive headroom)
+gross USDT locked = 1 × TVL_settled      live backing: every settled claim in exactly
+                                          one active leaf — invariant (G2/T5), no lever
+                  + parked receivables    operator-owned capital in unexpired FORFEITED
+                                          leaves, awaiting recovery — policy-dependent
 ```
 
-Under the §19 recommended defaults (weekly epochs, ~6-month expiry), `D ≈ 26`. The steering levers are: shorter `W_exp` (cheaper capital, heavier user liveness burden per §14.4), slower cadence (cheaper capital, larger outstanding `pending`), per-user refresh throttling (only refreshing users duplicate), and early reclamation below. Note the full-reserve property is not a lever: G2/T5 make every cohort provably backed at cosign time, so no fractional reserve over settled balances is constructible.
+**Backing is always exactly 1×.** No fractional reserve over settled balances is constructible (a violating epoch collects no signatures), and no policy below changes this. The multiplier question concerns only the second term: when a user refreshes, their claim moves to a freshly funded leaf while their forfeited old leaf — now an operator receivable, not user money — stays physically locked in the old cohort output until that cohort is reclaimed or expires (§14.5).
+
+**Parked-receivable multiplier.** Per user, the number of parked copies of their balance is `min(T_reclaim, W_exp) / C`, where `C` is that user's refresh cadence and `T_reclaim` the operator's reclamation lag. The multiplier applies to the **actively refreshing** balance set only; dormant users sit at 1×. Worked points (with `W_exp ≈ 26` weeks):
+
+| Refresh cadence `C` | Reclamation lag `T_reclaim` | Gross multiple of refreshing TVL |
+|---|---|---|
+| weekly | never (wait for expiry) | ~27× — the worst-case corner |
+| weekly | ~monthly | ~5× |
+| ~monthly | never | ~7.5× |
+| ~monthly | ~monthly | ~2× |
+| no refresh (dormant) | — | 1× |
+
+**Financing cost, not solvency risk.** Parked receivables are illiquid but certain: the forfeits are the operator's unilaterally enforceable pre-signed right, and the expiry sweep is consensus-guaranteed. The operator's true cost is therefore working-capital financing, `(multiple − 1) × refreshing-TVL × cost of capital`, traded against the on-chain fees of reclaiming more aggressively and against the `pending` growth that slower refresh cadence causes. The steering levers: shorter `W_exp` (cheaper capital, heavier user liveness burden per §14.4), per-user refresh throttling, and the reclamation schedule below.
 
 **Early reclamation.** The operator MAY unilaterally unroll an old cohort's tree and broadcast the connector-bound forfeits of refreshed leaves to recover their capital before expiry. All transactions involved are pre-signed and conflict with no honest user's path (§10.4, formal companion L1/T6); unforfeited leaves remain untouchable until `H_exp` regardless. This trades O(cohort size) on-chain fees for released capital and is rational whenever the capital cost of waiting exceeds the fee cost.
 
@@ -436,7 +451,7 @@ Float ≈ peak of [ cooperative redemptions
 
 Pending settlement (refresh) is backed operationally by the inbound canonical flow that created the pending, never structurally — exactly NG1, which is why `pending` is capped (I3, T7). If the float is exhausted, cooperative flows stall and users degrade to unilateral exit: fees and delay, never loss of settled principal (§17.6-style graceful degradation).
 
-**[B-58]** A deployment MUST publish, alongside the [B-47] exit-cost model, an operator capital model stating: the projected overlap factor `D` and locked-reserve multiple, the redemption-float sizing and its recovery horizon, the early-reclamation policy, and the caps `P_max`/`X_global` in force. This model is part of the audit surface.
+**[B-58]** A deployment MUST publish, alongside the [B-47] exit-cost model, an operator capital model stating: the backing/receivable decomposition above with its projected gross multiple (from the deployment's expected `C` and chosen `T_reclaim`), the redemption-float sizing and its recovery horizon, the reclamation schedule, and the caps `P_max`/`X_global` in force. The model MUST present live backing (invariantly 1×) separately from parked receivables so that the solvency statement and the financing statement cannot be conflated. This model is part of the audit surface.
 
 ---
 
@@ -778,7 +793,7 @@ Before `H_exp`, the operator's only capabilities on tree outputs are the cosigne
 | Leaf BTC value | `btc_leaf` | all downstream outputs standard | 10,000 sat |
 | Connector value | — | ≥ dust for its type | 330 sat |
 | Pending cap | `P_max` | client policy | 10% of `R_settled` or a fixed fiat-equivalent floor, whichever is greater |
-| Refresh cadence | `W_refresh` | operator policy; SHOULD keep median `pending` small; drives the §9.4 reserve multiplier `D ≈ W_exp / W_refresh` | weekly epochs |
+| Refresh cadence | `W_refresh` | operator policy; SHOULD keep median `pending` small; with the reclamation lag, drives the §9.4 parked-receivable multiple `min(T_reclaim, W_exp) / C` | weekly epochs |
 
 **[B-49]** Clients MUST allow the user to override policy values (`P_max`, alarm thresholds) but MUST NOT allow silently disabling the `D_exit` alarm; automatic exit at `D_exit` is RECOMMENDED as default-on, with explicit user override permitted.
 
