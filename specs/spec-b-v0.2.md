@@ -71,7 +71,7 @@ This document specifies:
 
 ### 1.4 Reading guide for auditors
 
-All normative requirements carry stable identifiers `[B-nn]`. Invariants are `I1..I3`, guarantees `G1..G5`, assumptions `A1..A7`, dependencies `D-*`, open R&D items `R-1..R-6`, and ceremony validation checks `V1..V12`. §24 aggregates every MUST-level requirement. §25 maps every v0.1 review finding (F1–F12) to its resolution.
+All normative requirements carry stable identifiers `[B-nn]`. Invariants are `I1..I4`, guarantees `G1..G5`, assumptions `A1..A7`, dependencies `D-*`, open R&D items `R-1..R-7`, and ceremony validation checks `V1..V12`. §24 aggregates every MUST-level requirement. §25 maps every v0.1 review finding (F1–F12) to its resolution.
 
 ---
 
@@ -270,6 +270,14 @@ Together: `Σ_i R_settled,i ≤ Σ_active N A_N ≤` total canonical USDT held u
 ### 6.4 Exposure caps (restated from overlay spec)
 
 - **I3 (credit caps).** `pending_i ≤ P_max` per user as client policy ([B-29]), and `Σ_i pending_i ≤ X_global` as operator policy, where `X_global` is the overlay spec's global exposure cap. Violation of I3 harms only the capped party's counterparty risk; it never affects G1.
+
+### 6.5 Operational float invariant (I4)
+
+Every unit of `pending` is created against value the operator simultaneously received: an inbound payment credits vUSDT to the user only when the same-preimage HTLC delivers canonical USDT into the operator's channels (§11.6), and a leaf-state decrease on a failed send returns value the operator never paid out. The economic backing of pending therefore always *exists* at creation time; what NG1 concedes is only that it is not cryptographically committed to the user. The corresponding solvency rule is made explicit:
+
+- **I4 (float coverage).** At all times, the operator's unencumbered canonical holdings (float outside cohort commitments) MUST be at least `Σ_i pending_i`.
+
+**[B-67]** The operator MUST maintain I4 as an operational invariant — inbound canonical receipts that created pending MUST NOT be deployed in ways that break float coverage before the pending is settled — and the [B-58] capital model MUST report the float-coverage ratio and its measurement method. I4 is deliberately *operational*, not theorem-backed: it cannot be enforced by the protocol's cryptography (that is exactly NG1's boundary), so it is a conformance-and-disclosure requirement, complemented by the aggregate-transparency item R-7 (§23).
 
 ---
 
@@ -582,6 +590,8 @@ Operator credit exposure is thereby zero on sends and equal to the pending-recei
 ### 11.6 Pending cap
 
 **[B-29]** Clients MUST enforce a policy cap `pending_i ≤ P_max`: when a prospective receive would exceed it and the leaf is at capacity, the Client MUST either refuse the payment or obtain a refresh first. `P_max` is user-configurable with a RECOMMENDED default in §19.
+
+**Receive-backing lifecycle.** A common concern — "if a payer pays over Lightning and the user receives vUSDT while the canonical USDT lands in the operator's channel, is the vUSDT backed?" — is resolved by three facts. (1) *Creation is atomic:* the payer's canonical HTLC into the operator and the operator's vUSDT HTLC to the user are hops of one payment with one preimage, so credit cannot come into existence without the backing arriving in the operator's hands; the gap is commitment lag ([B-27]/refresh), never backing absence, and I4/[B-67] obliges the operator to hold that backing as float until settlement. (2) *Failure is safe:* beyond leaf headroom plus `P_max`, the Client fails the HTLC back to the payer — the payment bounces rather than creating uncapped credit. (3) *Third parties are unaffected:* vUSDT issuance is bilateral credit, not reserve dilution — every settled claim is backed by its own leaf allocation (G2/T5) regardless of how much vUSDT exists. Instant settlement of a receive does require pre-funded leaf headroom `ω` — the vault-side analog of inbound liquidity, priced per §9.4 — exactly as Ark-class systems require in-round capacity for out-of-round receives to become trustless.
 
 ### 11.7 Cooperative close and redemption
 
@@ -979,6 +989,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 | R-4 | Lightning integration & ceremony transport | No (any transport meeting [B-11]/[B-13] ordering works) | Message-level spec covering the three tiers in the scope note below — including replay/DoS handling and restart-with-fresh-nonces for the ceremony transport |
 | R-5 | Delegated refresh | **Closed — resolved by §21.2** | Committee-mode parking refreshes (rolls forward) a dormant user's claim with no user participation; no individual delegate gains spending capability (breaking a parked claim requires unanimous committee + operator collusion, [B-61]); failure mode is no roll-forward with unilateral exit preserved. Residual: unplanned dormancy of self-covered users remains subject to the §14.4 deadline, mitigated by [B-52] alarms/auto-exit |
 | R-6 | Covenant migration | No | Coexistence plan per §21 |
+| R-7 | Aggregate liability transparency (proof of liabilities) | No (I4/[B-67] disclosure is the interim control) | A published, periodically updated commitment to `Σ pending_i` (e.g. a Merkle-sum tree of per-user pending) in which each Client verifies inclusion of its own balance, making I4 float coverage externally checkable against attested reserves instead of operator-reported only |
 
 **R-4 scope note — Lightning integration requirements.** Nothing in this specification changes Bitcoin consensus or the network-facing BOLTs: the operator's outward channels are ordinary Lightning channels, and every deviation is confined to the user↔operator link. The R-4 deliverable therefore decomposes into three tiers. *Tier 0 (reuse):* the RGB-Lightning channel extension set for the overlay (asset-carrying commitments, asset-amount HTLC TLVs, asset invoices, funding consignment exchange), HTLC interception for [B-26] enforcement, and the BOLT quiescence protocol (or the equivalent handshake [B-34] permits). *Tier 1 (new, bilateral, non-BOLT):* the leaf sub-channel implementation per [B-64]; the atomic leaf-update-plus-HTLC session of [B-28]; the ceremony transport itself (nonce rounds, package delivery, forfeit collection) as custom peer messages; and watchtower extensions for the user-side `Δ_rev` penalty watch ([B-54]) and the operator-side forfeit watch (A7). *Tier 2 (out of scope):* multi-hop asset routing and standardized asset fields in BOLT11/12 — needed only if payments ever route beyond the operator hub.
 
@@ -994,7 +1005,7 @@ All MUST-level requirements by conformance target. Requirement B-46 carries only
 
 **BTC profile (Appendix B) additionally:** B-66 (operator: explicit profile claim; R-1 exempt, R-2 not).
 
-**Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58, B-60, B-61 (B-60/B-61 additionally bind committee members in deployments offering §21.2).
+**Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58, B-60, B-61 (B-60/B-61 additionally bind committee members in deployments offering §21.2), B-67.
 
 **Client:** B-02, B-03, B-12, B-14, B-16, B-18, B-28, B-29, B-37, B-49, B-50, B-51, B-52, B-53, B-54.
 
