@@ -963,7 +963,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 | R-1 | D-VS instantiation (virtual seals) | **Launch blocker** | A concrete RGB construction with a security argument that VS-1..VS-4 hold; independent audit; interop test: full ceremony + adversarial exit on signet |
 | R-2 | Exit cost and capital models per deployment | **Parameter-freeze blocker** | Published models per [B-47] and [B-58]; `R_min` derived from the former; reserve multiple `D` and redemption float from the latter |
 | R-3 | Consignment growth / checkpointing | No (bounded by [B-44] disclosure) | Published size envelope; pruning design or sharding schedule keeping worst-case exit validation under a stated budget |
-| R-4 | Ceremony transport & session protocol | No (any transport meeting [B-11]/[B-13] ordering works) | Message-level spec with replay/DoS handling; restart-with-fresh-nonces verified |
+| R-4 | Lightning integration & ceremony transport | No (any transport meeting [B-11]/[B-13] ordering works) | Message-level spec covering the three tiers in the scope note below — including replay/DoS handling and restart-with-fresh-nonces for the ceremony transport |
 | R-5 | Delegated refresh | **Closed — resolved by §21.2** | Committee-mode parking refreshes (rolls forward) a dormant user's claim with no user participation; no individual delegate gains spending capability (breaking a parked claim requires unanimous committee + operator collusion, [B-61]); failure mode is no roll-forward with unilateral exit preserved. Residual: unplanned dormancy of self-covered users remains subject to the §14.4 deadline, mitigated by [B-52] alarms/auto-exit |
 | R-6 | Covenant migration | No | Coexistence plan per §21 |
 
@@ -1091,7 +1091,7 @@ No payment ever touches the chain, the reserve, or the tree: those move only at 
 
 ### B.1 Construction
 
-- **Settled asset = sats.** The epoch transaction, tree, and leaves carry plain bitcoin: a leaf's satoshi value *is* the user's settled balance (superseding `btc_leaf`'s anchor-budget role; leaf BTC = `R_settled,i` plus output overhead). Leaf sub-channel states split sats between user and operator with the unchanged §11/[B-64] machinery. Unilateral exit (§16.3, T2) delivers bitcoin directly.
+- **Settled asset = sats.** The epoch transaction, tree, and leaves carry plain bitcoin: a leaf's satoshi value *is* the leaf allocation `ℓ(i)` (superseding `btc_leaf`'s anchor-budget role; leaf BTC = `ℓ(i)` plus output overhead), and leaf sub-channel states split those sats between user and operator with the unchanged §11/[B-64] machinery — `R_settled,i` is the user's share of the latest state, exactly as in §11.2. Unilateral exit (§16.3, T2) delivers bitcoin directly.
 - **Overlay asset = vBTC.** The operator issues an RGB asset `vBTC` and provisions it as overlay-channel capacity, exactly as vUSDT: arbitrarily large, synthetic, carrying no claim by itself. The overlay channels are ordinary RGB-Lightning channels (R-4 Tier 0); payments, coupling ([B-26]/[B-28]), quiescence (§12), and the pending mechanism ([B-27]/[B-29]) apply unchanged with `vBTC` in place of `vUSDT` and sats as the settled unit.
 - **Atomic onboarding (§9.5)** takes a plain BTC UTXO as the user-contributed epoch input; [B-63] applies with the RGB-allocation clause vacuous.
 
