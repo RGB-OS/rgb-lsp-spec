@@ -382,6 +382,8 @@ inputs:
   [0..a]  operator reserve inputs        — Taproot, operator-controlled; carry the
                                            canonical-USDT allocations being committed
   [a+1..b] operator BTC liquidity inputs — fund cohort BTC value, connectors, anchors
+  [opt]   user onboarding inputs         — user-contributed canonical-USDT UTXOs
+                                           (atomic onboarding, §9.5)
 
 outputs:
   [0]     cohort output O_N              — BTC: Σ leaf BTC values + tree anchor budget
@@ -459,6 +461,20 @@ Reclamation cost is on-chain fees only — unrolling a cohort is O(cohort size) 
 **Full-cohort rollover (optional optimization).** When **every** member of cohort `N` participates in the refresh into `N+1`, the transition MAY be executed as a *rollover*: the epoch transaction `E_{N+1}` takes the old cohort output `O_N` itself as an input, cosigned by the full old aggregate `S_N ∪ {O}` during the same ceremony. This recycles the old cohort's capital atomically — no duplication, no transient 2×, and **no forfeits or connectors are needed for that transition**, because every old claim's root input is spent by the very transaction that activates the new claims (supersession by conflict, enforced by consensus rather than by operator watch). If any member is absent, the transition MUST fall back to the standard partitioned epoch of §8–§9. Sharding cohorts by activity level makes the all-online case common for active users, taking their steady-state cost toward 1×.
 
 **[B-62]** In a rollover, the signature over the `O_N` input plays the role of the forfeit and MUST be governed by the same ordering discipline: a Client MUST NOT sign the spend of `O_N` before completing stage-4 verification of its full `N+1` package ([B-12]/[B-14] applied verbatim), and the operator MUST NOT broadcast `E_{N+1}` without the complete old-aggregate signature (partial rollovers are forbidden — it is all of `S_N` or the §8–§9 fallback). Leaf commitments retain `Δ_leaf` unconditionally ([B-08]), since a cohort cannot know at construction time whether its *next* transition will qualify for rollover.
+
+### 9.5 Atomic onboarding (user-contributed epoch inputs)
+
+Without this option, a new deposit is unsecured operator credit (`pending`) from the moment the user pays the operator until their first epoch activates — an onboarding trust window equal to the entire deposit. Atomic onboarding eliminates it: the user contributes their own canonical-USDT UTXO **directly as an input to `E_N`**, cosigning it during the ceremony, with their leaf created by the same transaction. Either `E_N` confirms — and the deposit and the enforceable claim come into existence atomically — or it never confirms and the user still owns their original UTXO, since their input signature authorizes exactly `E_N` and nothing else. At no instant does the operator hold the deposit without the user holding an enforceable claim.
+
+```text
+Alice's 500-USDT UTXO ──┐
+operator reserve inputs ─┼──► E_N ──► cohort output ──► tree ──► Alice's leaf (≥ 500)
+operator BTC inputs ─────┘
+```
+
+**[B-63]** Onboarding inputs MUST be SegWit ([B-19] applies to them verbatim) and their RGB allocations MUST be consumed by `E_N`'s root transition, so that conservation checks V3–V4 cover them. A contributing Client MUST verify, before signing its deposit input, that its leaf allocation is at least its contribution plus any concurrently settled pending, and MUST apply the package-first discipline to that signature ([B-12]/[B-14] verbatim — no deposit-input signature before stage-4 verification of the complete exit package). The operator MUST NOT accept an onboarding contribution outside a ceremony, and an aborted epoch ([B-10]) leaves the contributed UTXO untouched by construction.
+
+Deposits made outside a ceremony (ordinary receives, §11.5) remain supported and remain `pending` until first settlement; Clients SHOULD prefer atomic onboarding for amounts above `P_max` and MUST display the difference per [B-53].
 
 **Early reclamation.** The operator MAY unilaterally unroll an old cohort's tree and broadcast the connector-bound forfeits of refreshed leaves to recover their capital before expiry. All transactions involved are pre-signed and conflict with no honest user's path (§10.4, formal companion L1/T6); unforfeited leaves remain untouchable until `H_exp` regardless. This trades O(cohort size) on-chain fees for released capital and is rational whenever the capital cost of waiting exceeds the fee cost.
 
@@ -956,7 +972,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 
 All MUST-level requirements by conformance target. Requirement B-46 carries only SHOULD force and is therefore intentionally absent here; it remains normative guidance in §16.2.
 
-**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast).
+**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance).
 
 **Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58, B-60, B-61 (B-60/B-61 additionally bind committee members in deployments offering §21.2).
 
@@ -1040,3 +1056,22 @@ Update *count* is unlimited here too — leaf updates are ordinary off-chain LN-
 - **Cooperation.** Every update needs the operator's signature, exactly as every LN update needs your peer's; refusal is a liveness risk (NG2) whose remedy is unilateral exit with the last completed state.
 
 Mental model: a leaf is a Lightning channel in every off-chain respect, mounted on an unconfirmed funding output with a fixed size and an expiry date, delegating routing to the channel above it.
+
+### A.5 — "Walk me through the money lifecycle: in, around, out."
+
+**In (onboarding).** A new user's balance climbs a ladder: *deposit → pending → settled*.
+
+1. **Channel:** the user gets a vUSDT Lightning channel from the LSP; inbound capacity is synthetic and costs the LSP nothing (§6.3). State: `R_current = 0`, no leaf.
+2. **Deposit:** canonical USDT reaches the LSP by any route — the user's own transfer, a third-party payment, an on-ramp — and the LSP forwards the amount as vUSDT. Now `R_current = 500, R_settled = 0`: the whole deposit is `pending`, i.e. operator credit (NG1), while the LSP holds the canonical in float.
+3. **First epoch:** at the next ceremony the user's snapshot fixes 500 ([B-34]), they run V1–V12, cosign their path and initial leaf state, verify their exit package ([B-12]) — no forfeit, nothing to supersede — and when `E_N` is `k`-deep, `R_settled = 500`: property, backed by the very canonical they deposited (§9.4, "whose money").
+4. **Or skip the trust window entirely:** with atomic onboarding (§9.5) the user contributes their USDT UTXO as an input to `E_N` itself — the deposit and the enforceable claim are created by one transaction, or neither exists.
+
+**Around (payments).** Two coupled layers move on every payment; the order is the security mechanism.
+
+*Send 100 (balance 500):* (1) leaf-state decrease first — one LN-penalty update to `u = 400` ([B-26]/[B-28]); (2) then a standard vUSDT HTLC on the overlay channel, routed by the LSP, which bridges at its edge (vUSDT to a same-LSP recipient; its own canonical USDT to an external one); (3) settlement brings `R_current` to 400. A failed HTLC leaves the user briefly *under*-settled (never over — [B-05]), fixed by a cooperative raise.
+
+*Receive 100:* payer delivers to the LSP, LSP forwards a vUSDT HTLC (`R_current` +100), then the leaf is raised up to capacity ([B-27]); any excess is `pending` until refresh, capped by `P_max` ([B-29]). Sends extend zero credit; receives extend bounded credit — the deliberate asymmetry.
+
+No payment ever touches the chain, the reserve, or the tree: those move only at epochs, exits, forfeits, and sweeps (§9.2). Parked users (§21.2) cannot send until they unpark; refresh snapshots exclude in-flight HTLCs ([B-34]/[B-35]).
+
+**Out (redemption).** Per A.2: cooperatively, pay vUSDT back and receive canonical (covers up to `R_current`); unilaterally, broadcast the exit package and take `R_settled` with no one's cooperation. The ladder runs in reverse: settled property leaves through a path that was pre-signed the day it was created.
