@@ -180,6 +180,19 @@ The vUSDT overlay provides: user–operator Lightning channels carrying vUSDT (R
 
 **Canonical USDT** (`USDT`): the actual RGB asset. **vUSDT**: the synthetic liquidity asset; supply MAY be arbitrarily large (e.g. 1,000,000,000 vUSDT). **[B-04]** Clients and operators MUST treat vUSDT as valueless outside the claim structure of this document plus the overlay spec's credit accounting; in particular, vUSDT MUST NOT be represented to users as USDT, and displayed user balances MUST distinguish settled from pending value (§20.5).
 
+**Design rationale — why two channels (the rail/vault split).** A recurring reviewer question: are the overlay channel and the leaf sub-channel redundant — why not one Ark-like channel? They are not redundant; each holds the one property the other structurally cannot, and merging them forfeits one side of the design objective (capital-efficient inbound liquidity *and* self-custody of realized balances):
+
+| | Overlay channel (rail) | Leaf sub-channel (vault) |
+|---|---|---|
+| Capacity | elastic, synthetic, free (`C ≫ ℓ(i)`) | frozen per epoch — tapret fixed at signing (§15.3) |
+| A received unit is | credit (`pending`) | property (`R_settled`) |
+| HTLCs / routing | yes — ordinary confirmed-funding LN channel | structurally no (below) |
+| Lifetime | persistent across epochs | replaced at every refresh |
+
+The leaf cannot serve as the payment channel: its funding is unconfirmed by design and expected never to confirm ([B-64]), while HTLC safety requires force-closing before an absolute timeout — here force-close means an unroll plus `Δ_leaf` against an unpredictable confirmation height, breaking HTLC timeout races at any normal CLTV delta; add frozen capacity and per-refresh channel churn and the leaf is disqualified as a rail (this is *why* §12 makes it balance-only, and why Ark-class systems likewise pair vtxos with Lightning rather than routing over them). Conversely, the overlay cannot serve as custody: its asset is synthetic by construction — that is the purchase price of free capacity. Deleting the vault layer yields Specification A (pure credit); deleting the rail layer re-fragments real capital per user, the vanilla-LSP problem this architecture exists to remove.
+
+One honest simplification is available: the overlay's asset-enforcement machinery is heavier than its job. Since vUSDT carries no intrinsic claim, the overlay channel's real functions are process integrity — atomic HTLC settlement, a signed non-repudiable record of `R_current`, denominated payment amounts — and any bilateral credit-channel construction with HTLC semantics would satisfy them; RGB-Lightning is chosen for code reuse and ecosystem interop, not as a security requirement (see R-4 Tier 0). For the USDT deployment RGB remains load-bearing regardless: the canonical asset, the settled leaves, and USD-denominated HTLC amounts all require it.
+
 ### 4.5 Assumptions
 
 - **A1 (Bitcoin).** Bitcoin consensus is safe and live; no reorganization exceeds depth `k`; transactions paying prevailing fee rates confirm within the confirmation target `T_conf` used to size `M` (§14.4, §16.4).
@@ -1094,6 +1107,7 @@ No payment ever touches the chain, the reserve, or the tree: those move only at 
 - **Settled asset = sats.** The epoch transaction, tree, and leaves carry plain bitcoin: a leaf's satoshi value *is* the leaf allocation `ℓ(i)` (superseding `btc_leaf`'s anchor-budget role; leaf BTC = `ℓ(i)` plus output overhead), and leaf sub-channel states split those sats between user and operator with the unchanged §11/[B-64] machinery — `R_settled,i` is the user's share of the latest state, exactly as in §11.2. Unilateral exit (§16.3, T2) delivers bitcoin directly.
 - **Overlay asset = vBTC.** The operator issues an RGB asset `vBTC` and provisions it as overlay-channel capacity, exactly as vUSDT: arbitrarily large, synthetic, carrying no claim by itself. The overlay channels are ordinary RGB-Lightning channels (R-4 Tier 0); payments, coupling ([B-26]/[B-28]), quiescence (§12), and the pending mechanism ([B-27]/[B-29]) apply unchanged with `vBTC` in place of `vUSDT` and sats as the settled unit.
 - **Atomic onboarding (§9.5)** takes a plain BTC UTXO as the user-contributed epoch input; [B-63] applies with the RGB-allocation clause vacuous.
+- **Overlay choice (BTC-specific degree of freedom).** Unlike the USDT deployment (where a USD-denominated channel asset is required, §4.4 rationale), this profile MAY run the overlay either as synthetic `vBTC` (capital-free inbound capacity; receives are credit until settled — the standard rail/vault trade) or as **plain BTC Lightning channels** (every received sat is immediately real, self-custodial channel balance; the LSP pays vanilla capital cost for inbound capacity). With a plain-BTC overlay the tree still earns its place as the *stock* layer: channels are sized to payment throughput while balances park in the pooled tree, keeping real channel capacity small and recycled. A deployment MUST state which overlay it runs in its [B-58] capital model, since the pending semantics and the LSP's capital profile differ materially between the two.
 
 ### B.2 What becomes vacuous
 
