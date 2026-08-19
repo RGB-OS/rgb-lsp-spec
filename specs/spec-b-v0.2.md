@@ -555,6 +555,8 @@ outputs:
 
 **[B-25]** Publication of a revoked commitment forfeits the publisher's entire leaf amount to the counterparty via the revocation path, which MUST be exercisable throughout `Δ_rev`. The RGB transitions for both outputs and for the penalty spend are part of the pre-signed state data (D-VS property VS-4).
 
+**[B-64] (leaf commitment format — BOLT3-inspired, deliberately not BOLT3-compatible).** Leaf sub-channels MUST NOT be implemented as BOLT3 channels; two incompatibilities are structural. First, BOLT3 encodes the obscured commitment number into the input `nSequence` with bit 31 set, which *disables* relative timelocks, whereas [B-08] requires an **active** `nSequence = Δ_leaf` on every leaf commitment — commitment numbering MUST therefore be carried in `nLockTime` (or equivalent out-of-band state) only. Second, the funding output (the leaf) is unconfirmed for the channel's entire normal life — beyond "zero-conf", it is expected never to confirm — so implementations MUST NOT gate channel operation on funding depth. Leaf commitments carry no HTLC outputs (§12). Interoperability with third-party Lightning nodes is not a goal for this channel: both endpoints are always the user's Client and the operator.
+
 ### 11.5 Send and receive rules
 
 - **[B-26] (send ordering — closes the send-then-exit gap).** The operator MUST NOT irrevocably commit (forward or settle) any outgoing vUSDT HTLC of user `i` whose settlement would make `R_current,i < R_settled,i`. Concretely: any send that would take the user's balance below the current leaf state MUST be preceded or accompanied by a completed leaf-state decrease to at most the post-send balance. If the HTLC subsequently fails, the parties MAY complete a leaf-state raise back up (subject to [B-27]).
@@ -964,6 +966,8 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 | R-5 | Delegated refresh | **Closed — resolved by §21.2** | Committee-mode parking refreshes (rolls forward) a dormant user's claim with no user participation; no individual delegate gains spending capability (breaking a parked claim requires unanimous committee + operator collusion, [B-61]); failure mode is no roll-forward with unilateral exit preserved. Residual: unplanned dormancy of self-covered users remains subject to the §14.4 deadline, mitigated by [B-52] alarms/auto-exit |
 | R-6 | Covenant migration | No | Coexistence plan per §21 |
 
+**R-4 scope note — Lightning integration requirements.** Nothing in this specification changes Bitcoin consensus or the network-facing BOLTs: the operator's outward channels are ordinary Lightning channels, and every deviation is confined to the user↔operator link. The R-4 deliverable therefore decomposes into three tiers. *Tier 0 (reuse):* the RGB-Lightning channel extension set for the overlay (asset-carrying commitments, asset-amount HTLC TLVs, asset invoices, funding consignment exchange), HTLC interception for [B-26] enforcement, and the BOLT quiescence protocol (or the equivalent handshake [B-34] permits). *Tier 1 (new, bilateral, non-BOLT):* the leaf sub-channel implementation per [B-64]; the atomic leaf-update-plus-HTLC session of [B-28]; the ceremony transport itself (nonce rounds, package delivery, forfeit collection) as custom peer messages; and watchtower extensions for the user-side `Δ_rev` penalty watch ([B-54]) and the operator-side forfeit watch (A7). *Tier 2 (out of scope):* multi-hop asset routing and standardized asset fields in BOLT11/12 — needed only if payments ever route beyond the operator hub.
+
 **[B-57]** A deployment MUST NOT represent itself as conforming to this specification while R-1 or R-2 is unmet.
 
 ---
@@ -972,7 +976,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 
 All MUST-level requirements by conformance target. Requirement B-46 carries only SHOULD force and is therefore intentionally absent here; it remains normative guidance in §16.2.
 
-**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance).
+**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format).
 
 **Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58, B-60, B-61 (B-60/B-61 additionally bind committee members in deployments offering §21.2).
 
