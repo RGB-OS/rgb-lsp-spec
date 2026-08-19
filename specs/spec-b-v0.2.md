@@ -37,6 +37,7 @@
 24. [Conformance checklist](#24-conformance-checklist)
 25. [Changelog and findings disposition](#25-changelog-and-findings-disposition)
 - [Appendix A — Non-normative Q&A](#appendix-a--non-normative-qa)
+- [Appendix B — BTC instantiation (normative profile)](#appendix-b--btc-instantiation-normative-profile)
 
 ---
 
@@ -976,7 +977,9 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 
 All MUST-level requirements by conformance target. Requirement B-46 carries only SHOULD force and is therefore intentionally absent here; it remains normative guidance in §16.2.
 
-**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format).
+**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format), B-65 (BTC profile: operator disclosure, client display).
+
+**BTC profile (Appendix B) additionally:** B-66 (operator: explicit profile claim; R-1 exempt, R-2 not).
 
 **Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58, B-60, B-61 (B-60/B-61 additionally bind committee members in deployments offering §21.2).
 
@@ -1079,3 +1082,41 @@ Mental model: a leaf is a Lightning channel in every off-chain respect, mounted 
 No payment ever touches the chain, the reserve, or the tree: those move only at epochs, exits, forfeits, and sweeps (§9.2). Parked users (§21.2) cannot send until they unpark; refresh snapshots exclude in-flight HTLCs ([B-34]/[B-35]).
 
 **Out (redemption).** Per A.2: cooperatively, pay vUSDT back and receive canonical (covers up to `R_current`); unilaterally, broadcast the exit package and take `R_settled` with no one's cooperation. The ladder runs in reverse: settled property leaves through a path that was pre-signed the day it was created.
+
+---
+
+## Appendix B — BTC instantiation (normative profile)
+
+*This appendix defines a conformance profile of this specification in which the settled asset is bitcoin itself. A deployment implementing this profile is a "Spec B/BTC" deployment. Everything not modified here applies verbatim.*
+
+### B.1 Construction
+
+- **Settled asset = sats.** The epoch transaction, tree, and leaves carry plain bitcoin: a leaf's satoshi value *is* the user's settled balance (superseding `btc_leaf`'s anchor-budget role; leaf BTC = `R_settled,i` plus output overhead). Leaf sub-channel states split sats between user and operator with the unchanged §11/[B-64] machinery. Unilateral exit (§16.3, T2) delivers bitcoin directly.
+- **Overlay asset = vBTC.** The operator issues an RGB asset `vBTC` and provisions it as overlay-channel capacity, exactly as vUSDT: arbitrarily large, synthetic, carrying no claim by itself. The overlay channels are ordinary RGB-Lightning channels (R-4 Tier 0); payments, coupling ([B-26]/[B-28]), quiescence (§12), and the pending mechanism ([B-27]/[B-29]) apply unchanged with `vBTC` in place of `vUSDT` and sats as the settled unit.
+- **Atomic onboarding (§9.5)** takes a plain BTC UTXO as the user-contributed epoch input; [B-63] applies with the RGB-allocation clause vacuous.
+
+### B.2 What becomes vacuous
+
+Because no RGB state rides the tree or the exit path:
+
+- **A3/AX-VS and dependency D-VS are not used**; **[B-45] does not apply** and **R-1 is not applicable** to this profile — it is not a launch blocker here.
+- §15.1–§15.3 and §15.5 (tree transitions, virtual-seal interface, consignment growth, R-3) are vacuous; §15.4's floor reduces to Bitcoin dust and exit-cost rationality ([B-47]), i.e. `R_min` is set by [B-51]'s model alone.
+- Ceremony checks V3–V4 reduce to verifying the tree's satoshi values (leaf sums and cohort output value), which Bitcoin consensus then enforces on every spend; G2 (non-inflation) holds by transaction validity alone.
+
+### B.3 What strengthens
+
+Every guarantee's asset half becomes unconditional: G1/T2 (and G1′ in committee mode) rest on AX-FIN/AX-CONF/AX-SIG only. The §3.2 boundary statement loses its research caveat — for settled balances this profile is Lightning-grade self-custody of bitcoin, with the expiry and ceremony-participation obligations as the only deltas from a vanilla channel (both softened by §21.2 as usual).
+
+### B.4 What is retained unchanged
+
+The output and key model (§7), ceremony (§8), epoch anatomy and capital model (§9, including the dial, rollover [B-62], and [B-58] disclosure — denominated in BTC), tree (§10), leaf sub-channels (§11, [B-64]), forfeit layer (§13), expiry/refresh (§14), fees and exit-cost model (§16), failure analysis (§17), parameters (§19, minus RGB-specific rows), client requirements (§20), committee mode (§21.2), and privacy properties (§22). R-2 and R-4 remain as stated (R-4's only RGB surface is the overlay channels).
+
+### B.5 Profile requirements
+
+**[B-65]** A Spec B/BTC deployment MUST apply [B-04] to vBTC verbatim: vBTC MUST NOT be represented to users as bitcoin, and displayed balances MUST distinguish settled sats (property) from pending vBTC (operator credit). vBTC issuance is unconstrained in size but MUST be disclosed as synthetic in the [B-58] capital model.
+
+**[B-66]** A deployment claiming this profile MUST state so explicitly (conformance is to this appendix, with §B.2's exemptions and no others) and MUST still satisfy [B-57] with respect to R-2; R-1 is exempt per §B.2.
+
+### B.6 Two-phase deployment path
+
+This profile exercises every novel component of the specification — ceremonies, trees, leaf channels, forfeits, capital management, committee mode — with zero dependence on the open research item. The intended sequencing for a USDT deployment is therefore: ship and audit the BTC profile first (the unconditional core), then upgrade the settled asset to canonical RGB-USDT when a D-VS instantiation passes R-1's acceptance criteria — at which point the audit increment is exactly §15 plus the asset halves of the formal companion's theorems, nothing else.
