@@ -577,7 +577,7 @@ outputs:
 
 **[B-25]** Publication of a revoked commitment forfeits the publisher's entire leaf amount to the counterparty via the revocation path, which MUST be exercisable throughout `Δ_rev`. The RGB transitions for both outputs and for the penalty spend are part of the pre-signed state data (D-VS property VS-4).
 
-**[B-64] (leaf commitment format — BOLT3-inspired, deliberately not BOLT3-compatible).** Leaf sub-channels MUST NOT be implemented as BOLT3 channels; two incompatibilities are structural. First, BOLT3 encodes the obscured commitment number into the input `nSequence` with bit 31 set, which *disables* relative timelocks, whereas [B-08] requires an **active** `nSequence = Δ_leaf` on every leaf commitment — commitment numbering MUST therefore be carried in `nLockTime` (or equivalent out-of-band state) only. Second, the funding output (the leaf) is unconfirmed for the channel's entire normal life — beyond "zero-conf", it is expected never to confirm — so implementations MUST NOT gate channel operation on funding depth. Leaf commitments carry no HTLC outputs (§12). Interoperability with third-party Lightning nodes is not a goal for this channel: both endpoints are always the user's Client and the operator.
+**[B-64] (leaf commitment format — BOLT3-inspired, deliberately not BOLT3-compatible).** Leaf sub-channels MUST NOT be implemented as BOLT3 channels; two incompatibilities are structural. First, BOLT3 encodes the obscured commitment number into the input `nSequence` with bit 31 set, which *disables* relative timelocks, whereas [B-08] requires an **active** `nSequence = Δ_leaf` on every leaf commitment — commitment numbering MUST therefore be carried in `nLockTime` (or equivalent out-of-band state) only. Second, the funding output (the leaf) is unconfirmed for the channel's entire normal life — beyond "zero-conf", it is expected never to confirm — so implementations MUST NOT gate channel operation on funding depth. Leaf commitments carry no routed or absolute-timelocked HTLC outputs (§12); the CSV-locked receive mirror of §11.8 is the sole permitted conditional output. Interoperability with third-party Lightning nodes is not a goal for this channel: both endpoints are always the user's Client and the operator.
 
 ### 11.5 Send and receive rules
 
@@ -591,11 +591,31 @@ Operator credit exposure is thereby zero on sends and equal to the pending-recei
 
 **[B-29]** Clients MUST enforce a policy cap `pending_i ≤ P_max`: when a prospective receive would exceed it and the leaf is at capacity, the Client MUST either refuse the payment or obtain a refresh first. `P_max` is user-configurable with a RECOMMENDED default in §19.
 
-**Receive-backing lifecycle.** A common concern — "if a payer pays over Lightning and the user receives vUSDT while the canonical USDT lands in the operator's channel, is the vUSDT backed?" — is resolved by three facts. (1) *Creation is atomic:* the payer's canonical HTLC into the operator and the operator's vUSDT HTLC to the user are hops of one payment with one preimage, so credit cannot come into existence without the backing arriving in the operator's hands; the gap is commitment lag ([B-27]/refresh), never backing absence, and I4/[B-67] obliges the operator to hold that backing as float until settlement. (2) *Failure is safe:* beyond leaf headroom plus `P_max`, the Client fails the HTLC back to the payer — the payment bounces rather than creating uncapped credit. (3) *Third parties are unaffected:* vUSDT issuance is bilateral credit, not reserve dilution — every settled claim is backed by its own leaf allocation (G2/T5) regardless of how much vUSDT exists. Instant settlement of a receive does require pre-funded leaf headroom `ω` — the vault-side analog of inbound liquidity, priced per §9.4 — exactly as Ark-class systems require in-round capacity for out-of-round receives to become trustless.
+**Receive-backing lifecycle.** A common concern — "if a payer pays over Lightning and the user receives vUSDT while the canonical USDT lands in the operator's channel, is the vUSDT backed?" — is resolved by three facts. (1) *Creation is atomic:* the payer's canonical HTLC into the operator and the operator's vUSDT HTLC to the user are hops of one payment with one preimage, so credit cannot come into existence without the backing arriving in the operator's hands; the gap is commitment lag ([B-27]/refresh), never backing absence, and I4/[B-67] obliges the operator to hold that backing as float until settlement. (2) *Failure is safe:* beyond leaf headroom plus `P_max`, the Client fails the HTLC back to the payer — the payment bounces rather than creating uncapped credit. (3) *Third parties are unaffected:* vUSDT issuance is bilateral credit, not reserve dilution — every settled claim is backed by its own leaf allocation (G2/T5) regardless of how much vUSDT exists. Instant settlement of a receive does require pre-funded leaf headroom `ω` — the vault-side analog of inbound liquidity, priced per §9.4 — exactly as Ark-class systems require in-round capacity for out-of-round receives to become trustless. Deployments offering the §11.8 atomic-receive extension close even the residual seconds-wide window: the settled entitlement is signed *before* the preimage is revealed, hash-locked to it, so within headroom a receive extends zero trust at any instant.
 
 ### 11.7 Cooperative close and redemption
 
 With both parties online, a leaf MAY be closed cooperatively at any time: a key-path spend of `L_i^N` (or, if the tree is unbroadcast, simply a refresh that pays the user's `R_settled` out as canonical USDT from operator change in `E_{N+1}`). Cooperative canonical-USDT redemption at any amount ≤ `R_current,i` is an overlay-level flow settled at the next refresh or paid directly from operator funds.
+
+### 11.8 Atomic receive (preimage-locked raise) — optional extension
+
+The base receive flow ([B-27]) leaves a seconds-wide window in which the user has revealed the payment preimage but holds only credit. This OPTIONAL extension closes it: the leaf raise is signed *before* the preimage is revealed, hash-locked to the same preimage, so the user holds an enforceable settled entitlement that revealing *activates* — a receive extends zero trust while headroom exists.
+
+**Construction.** For an inbound payment of `x` with hash `h`, the parties exchange leaf state `n+1` whose commitments carry, alongside the §11.4 outputs, one **receive-mirror output** of amount `x` (allocated from operator headroom `ω`):
+
+```text
+mirror(x, h):  (U_i key + preimage of h, no delay)
+             ∨ (P_O key, after CSV Δ_htlc)
+             ∨ (counterparty revocation path of state n+1, per [B-25])
+```
+
+Both spend paths are **relative** locks, so the construction is sound over the deliberately-unconfirmed leaf funding — this is exactly the property that routed HTLCs (which need *absolute*, hop-aligned timeouts) cannot have, and why they remain forbidden ([B-64]). No multi-hop alignment is needed because the mirror is bilateral and terminal: it mirrors the overlay HTLC's outcome, it does not route.
+
+**Protocol.** (1) Operator forwards the overlay HTLC and offers state `n+1`; (2) the parties complete the `n+1` exchange per [B-24] *without yet revoking* the base state; (3) only after holding its fully signed `n+1` does the Client reveal the preimage — settling the overlay HTLC and activating the mirror; (4) the parties then consolidate to an unconditional state `n+2` (`u + x`) and revoke `n+1` and the base state. If the payment fails (no preimage by the overlay HTLC's expiry), the parties revert cooperatively; a user who disappears mid-flight is resolved on-chain by the operator's `Δ_htlc` path. If the operator refuses consolidation after reveal, the user's unilateral exit enforces the mirror via the preimage path (immediate upon commitment confirmation, always ahead of the operator's `Δ_htlc` window).
+
+**[B-68]** A deployment MAY offer atomic receive. Where offered: the mirror MUST be funded from existing leaf headroom; every spend path of a mirror MUST be relative-locked (no absolute timelock may appear anywhere in a leaf commitment); a Client MUST NOT reveal the preimage before holding its fully signed `n+1` state; and a Client with unresolved mirrors MUST retain their preimages as part of the exit package ([B-50], §20.2).
+
+**[B-69]** At most `N_mirror` mirrors may be concurrently unresolved per leaf (§19). All mirrors MUST be resolved — consolidated or reverted — before a refresh snapshot; for quiescence purposes ([B-30]) an unresolved mirror counts as in-flight. `Δ_htlc ≥ Δ_rev` (§19), giving the operator a reclaim window no shorter than the penalty window.
 
 ---
 
@@ -605,7 +625,7 @@ With both parties online, a leaf MAY be closed cooperatively at any time: a key-
 
 **[B-30]** A refresh snapshot for user `i` MUST be taken under per-channel quiescence: all vUSDT channels between `i` and the operator MUST have no in-flight HTLCs at the moment the refresh amount (§14.2) is fixed, using the LN quiescence protocol (`option_quiescence` / BOLT quiescence draft) or an equivalent stop-and-drain handshake.
 
-**[B-31]** In-flight amounts MUST be excluded from the settled leaf: mirroring HTLC success/timeout paths into the pre-signed tree is rejected by design (combinatorial pre-signing blowup). In-flight HTLCs resolve into `R_current,i` after the snapshot and settle at the next leaf-state update or refresh.
+**[B-31]** In-flight amounts MUST be excluded from the settled leaf: mirroring HTLC success/timeout paths into the pre-signed tree is rejected by design (combinatorial pre-signing blowup). In-flight HTLCs resolve into `R_current,i` after the snapshot and settle at the next leaf-state update or refresh. Unresolved §11.8 receive mirrors count as in-flight for this purpose and MUST be consolidated or reverted before the snapshot ([B-69]) — the pre-signed tree itself never carries conditional outputs.
 
 **[B-32]** Quiescence is per refreshing user and MUST NOT be required across the whole cohort simultaneously; the operator assembles per-user fixed amounts as users become quiescent during ceremony stage 1–2.
 
@@ -852,6 +872,8 @@ Before `H_exp`, the operator's only capabilities on tree outputs are the cosigne
 | Leaf commitment delay | `Δ_leaf` | `≥ max(k, T_conf)`; sized for adversarial congestion | 288 blocks |
 | Revocation delay | `Δ_rev` | ≥ 144 | 144 blocks |
 | Activation depth | `k` | ≥ 6 | 6 |
+| Receive-mirror timeout | `Δ_htlc` | ≥ `Δ_rev`; relative (CSV) only (§11.8) | 288 blocks |
+| Concurrent mirrors per leaf | `N_mirror` | ≥ 1 where §11.8 offered | 2 |
 | Confirmation target | `T_conf` | per A6 envelope | 36 blocks |
 | Min settled balance | `R_min` | ≥ §16.4 rationality floor and RGB minimums | deployment-computed |
 | Leaf BTC value | `btc_leaf` | all downstream outputs standard | 10,000 sat |
@@ -878,6 +900,7 @@ epoch_id N, parameter set hash, H_exp^N
 E_N txid; full path transactions O_N → L_i^N with aggregate signatures
 latest leaf commitment (holder side) + signatures; revocation secrets
   received for all counterparty revoked states; own per-state secrets
+preimages of any unresolved receive mirrors (§11.8, [B-68])
 RGB consignments: genesis → reserve → root transition → path transitions
   → leaf state transitions (VS-3)
 anchor keys / spend info for every anchor on the path
@@ -991,7 +1014,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 | R-6 | Covenant migration | No | Coexistence plan per §21 |
 | R-7 | Aggregate liability transparency (proof of liabilities) | No (I4/[B-67] disclosure is the interim control) | A published, periodically updated commitment to `Σ pending_i` (e.g. a Merkle-sum tree of per-user pending) in which each Client verifies inclusion of its own balance, making I4 float coverage externally checkable against attested reserves instead of operator-reported only |
 
-**R-4 scope note — Lightning integration requirements.** Nothing in this specification changes Bitcoin consensus or the network-facing BOLTs: the operator's outward channels are ordinary Lightning channels, and every deviation is confined to the user↔operator link. The R-4 deliverable therefore decomposes into three tiers. *Tier 0 (reuse):* the RGB-Lightning channel extension set for the overlay (asset-carrying commitments, asset-amount HTLC TLVs, asset invoices, funding consignment exchange), HTLC interception for [B-26] enforcement, and the BOLT quiescence protocol (or the equivalent handshake [B-34] permits). *Tier 1 (new, bilateral, non-BOLT):* the leaf sub-channel implementation per [B-64]; the atomic leaf-update-plus-HTLC session of [B-28]; the ceremony transport itself (nonce rounds, package delivery, forfeit collection) as custom peer messages; and watchtower extensions for the user-side `Δ_rev` penalty watch ([B-54]) and the operator-side forfeit watch (A7). *Tier 2 (out of scope):* multi-hop asset routing and standardized asset fields in BOLT11/12 — needed only if payments ever route beyond the operator hub.
+**R-4 scope note — Lightning integration requirements.** Nothing in this specification changes Bitcoin consensus or the network-facing BOLTs: the operator's outward channels are ordinary Lightning channels, and every deviation is confined to the user↔operator link. The R-4 deliverable therefore decomposes into three tiers. *Tier 0 (reuse):* the RGB-Lightning channel extension set for the overlay (asset-carrying commitments, asset-amount HTLC TLVs, asset invoices, funding consignment exchange), HTLC interception for [B-26] enforcement, and the BOLT quiescence protocol (or the equivalent handshake [B-30] permits). *Tier 1 (new, bilateral, non-BOLT):* the leaf sub-channel implementation per [B-64]; the atomic leaf-update-plus-HTLC session of [B-28]; the ceremony transport itself (nonce rounds, package delivery, forfeit collection) as custom peer messages; and watchtower extensions for the user-side `Δ_rev` penalty watch ([B-54]) and the operator-side forfeit watch (A7). *Tier 2 (out of scope):* multi-hop asset routing and standardized asset fields in BOLT11/12 — needed only if payments ever route beyond the operator hub.
 
 **[B-57]** A deployment MUST NOT represent itself as conforming to this specification while R-1 or R-2 is unmet.
 
@@ -1001,7 +1024,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 
 All MUST-level requirements by conformance target. Requirement B-46 carries only SHOULD force and is therefore intentionally absent here; it remains normative guidance in §16.2.
 
-**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format), B-65 (BTC profile: operator disclosure, client display).
+**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format), B-65 (BTC profile: operator disclosure, client display), B-68 and B-69 (atomic receive, where offered: client reveal discipline and preimage retention; both endpoints' mirror construction, caps, and pre-snapshot resolution).
 
 **BTC profile (Appendix B) additionally:** B-66 (operator: explicit profile claim; R-1 exempt, R-2 not).
 
@@ -1094,16 +1117,16 @@ Mental model: a leaf is a Lightning channel in every off-chain respect, mounted 
 
 1. **Channel:** the user gets a vUSDT Lightning channel from the LSP; inbound capacity is synthetic and costs the LSP nothing (§6.3). State: `R_current = 0`, no leaf.
 2. **Deposit:** canonical USDT reaches the LSP by any route — the user's own transfer, a third-party payment, an on-ramp — and the LSP forwards the amount as vUSDT. Now `R_current = 500, R_settled = 0`: the whole deposit is `pending`, i.e. operator credit (NG1), while the LSP holds the canonical in float.
-3. **First epoch:** at the next ceremony the user's snapshot fixes 500 ([B-34]), they run V1–V12, cosign their path and initial leaf state, verify their exit package ([B-12]) — no forfeit, nothing to supersede — and when `E_N` is `k`-deep, `R_settled = 500`: property, backed by the very canonical they deposited (§9.4, "whose money").
+3. **First epoch:** at the next ceremony the user's snapshot fixes 500 ([B-30]), they run V1–V12, cosign their path and initial leaf state, verify their exit package ([B-12]) — no forfeit, nothing to supersede — and when `E_N` is `k`-deep, `R_settled = 500`: property, backed by the very canonical they deposited (§9.4, "whose money").
 4. **Or skip the trust window entirely:** with atomic onboarding (§9.5) the user contributes their USDT UTXO as an input to `E_N` itself — the deposit and the enforceable claim are created by one transaction, or neither exists.
 
 **Around (payments).** Two coupled layers move on every payment; the order is the security mechanism.
 
 *Send 100 (balance 500):* (1) leaf-state decrease first — one LN-penalty update to `u = 400` ([B-26]/[B-28]); (2) then a standard vUSDT HTLC on the overlay channel, routed by the LSP, which bridges at its edge (vUSDT to a same-LSP recipient; its own canonical USDT to an external one); (3) settlement brings `R_current` to 400. A failed HTLC leaves the user briefly *under*-settled (never over — [B-05]), fixed by a cooperative raise.
 
-*Receive 100:* payer delivers to the LSP, LSP forwards a vUSDT HTLC (`R_current` +100), then the leaf is raised up to capacity ([B-27]); any excess is `pending` until refresh, capped by `P_max` ([B-29]). Sends extend zero credit; receives extend bounded credit — the deliberate asymmetry.
+*Receive 100:* payer delivers to the LSP, LSP forwards a vUSDT HTLC (`R_current` +100), then the leaf is raised up to capacity ([B-27]); any excess is `pending` until refresh, capped by `P_max` ([B-29]). Sends extend zero credit; receives extend bounded credit — the deliberate asymmetry. Where the §11.8 atomic-receive extension is offered, even that bounded credit disappears within headroom: the raise is signed first, hash-locked to the payment preimage, so revealing the preimage *is* taking settled ownership.
 
-No payment ever touches the chain, the reserve, or the tree: those move only at epochs, exits, forfeits, and sweeps (§9.2). Parked users (§21.2) cannot send until they unpark; refresh snapshots exclude in-flight HTLCs ([B-34]/[B-35]).
+No payment ever touches the chain, the reserve, or the tree: those move only at epochs, exits, forfeits, and sweeps (§9.2). Parked users (§21.2) cannot send until they unpark; refresh snapshots exclude in-flight HTLCs ([B-30]/[B-31]).
 
 **Out (redemption).** Per A.2: cooperatively, pay vUSDT back and receive canonical (covers up to `R_current`); unilaterally, broadcast the exit package and take `R_settled` with no one's cooperation. The ladder runs in reverse: settled property leaves through a path that was pre-signed the day it was created.
 
