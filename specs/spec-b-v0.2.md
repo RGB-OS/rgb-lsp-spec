@@ -498,6 +498,16 @@ operator BTC inputs ─────┘
 
 Deposits made outside a ceremony (ordinary receives, §11.5) remain supported and remain `pending` until first settlement; Clients SHOULD prefer atomic onboarding for amounts above `P_max` and MUST display the difference per [B-53].
 
+### 9.6 Internal members and high-velocity corridors
+
+High-volume counterparties — exchanges, merchants, other LSPs — SHOULD be brought **inside** the system as cohort members with dedicated large leaves, subtrees, or shards, rather than served as external payees. A payment to an internal member is then an *internal transfer* (sender leaf decrease, receiver leaf raise — atomically via §11.8 mirrors where offered): **no canonical USDT leaves the system and the redemption float is never touched.**
+
+**Capital mechanics of internal transfers.** Leaf capacities are frozen within an epoch (§15.3), so an internal transfer of `x` does not move value between leaf outputs on-chain: it grows the operator's share `ω` in the sender's leaf by `x` (a locked receivable) and spends `x` of the operator's pre-committed headroom in the receiver's leaf. The operator's *net* position is zero in every transfer, but both legs occupy locked outputs until the next epoch re-slices allocations. Internalization therefore does not make transfers capital-free within an epoch; what it changes is the recovery horizon — from "external float drained, recovered at reclamation lag" to "capital rotated internally, recovered at epoch cadence" — and it removes the external liquid outflow entirely.
+
+**Corridor sharding — the reallocation mechanism.** In-place reallocation between live leaves is impossible (tapret commitments are fixed at signing); the only re-slicing primitive is the epoch itself. The intended deployment pattern is therefore: place the internal member and its active counterparties in a **dedicated shard** and roll that shard's cohort frequently via full-cohort rollover ([B-62]) — draining swollen sender-`ω` back into receiver headroom in one atomic transaction, at ~1× capital, with no forfeits or connectors. The [B-62] all-online precondition is realistic precisely here: institutional members are always online and active users are by definition active. Retail long-tail shards keep a slower cadence; the two populations' capital profiles are decoupled by construction.
+
+**[B-71]** A deployment serving internal institutional members MUST include, in its [B-58] capital model, a corridor-level analysis: per-corridor flow velocity, the headroom provisioned for each internal member, the shard rollover cadence, and the resulting recovery horizon — acknowledging that corridor velocity rather than TVL sizes the float and headroom for these flows (§9.4).
+
 **Early reclamation.** The operator MAY unilaterally unroll an old cohort's tree and broadcast the connector-bound forfeits of refreshed leaves to recover their capital before expiry. All transactions involved are pre-signed and conflict with no honest user's path (§10.4, formal companion L1/T6); unforfeited leaves remain untouchable until `H_exp` regardless. This trades O(cohort size) on-chain fees for released capital and is rational whenever the capital cost of waiting exceeds the fee cost.
 
 **Redemption-side float.** Settled redemption via unilateral exit consumes **no** operator liquidity — the USDT is already in the cohort output, so settled balances are structurally run-proof: a simultaneous mass exit is linear in cohort size (§16.3) and cannot fail for lack of funds (T5/T6). Cooperative redemption (§11.7), by contrast, is paid from the operator's *unlocked* float, and what the operator receives in exchange — the increase of its in-leaf share `ω` — is a receivable locked until the user's exit, a cooperative close, early reclamation, or the cohort's expiry. The float must therefore cover, over the capital-recovery horizon:
@@ -510,6 +520,8 @@ Float ≈ peak of [ cooperative redemptions
 ```
 
 Pending settlement (refresh) is backed operationally by the inbound canonical flow that created the pending, never structurally — exactly NG1, which is why `pending` is capped (I3, T7). If the float is exhausted, cooperative flows stall and users degrade to unilateral exit: fees and delay, never loss of settled principal (§17.6-style graceful degradation).
+
+**Corridor velocity, not TVL, sizes the float in flow-heavy deployments.** A one-directional corridor — users depositing canonical and paying it out to an external counterparty such as an exchange — converts float into parked in-leaf receivables at corridor velocity: each unit deposited funds a leaf, each unit paid out drains the float, and the operator is left holding a locked receivable until recovery. Float requirement for such a corridor ≈ corridor volume per capital-recovery period, which for high-velocity flows dominates every TVL-based estimate above. The structural mitigation is to internalize the counterparty (§9.6).
 
 **[B-58]** A deployment MUST publish, alongside the [B-47] exit-cost model, an operator capital model stating: the backing/receivable decomposition above with its projected gross multiple (from the deployment's expected `C` and chosen `T_reclaim`), the redemption-float sizing and its recovery horizon, the reclamation schedule, and the caps `P_max`/`X_global` in force. The model MUST present live backing (invariantly 1×) separately from parked receivables so that the solvency statement and the financing statement cannot be conflated. This model is part of the audit surface.
 
@@ -597,7 +609,7 @@ Operator credit exposure is thereby zero on sends and equal to the pending-recei
 
 With both parties online, a leaf MAY be closed cooperatively at any time: a key-path spend of `L_i^N` (or, if the tree is unbroadcast, simply a refresh that pays the user's `R_settled` out as canonical USDT from operator change in `E_{N+1}`). Cooperative canonical-USDT redemption at any amount ≤ `R_current,i` is an overlay-level flow settled at the next refresh or paid directly from operator funds.
 
-### 11.8 Atomic receive (preimage-locked raise) — optional extension
+### 11.8 Atomic mirrors: receive, send, and internal transfer — optional extension
 
 The base receive flow ([B-27]) leaves a seconds-wide window in which the user has revealed the payment preimage but holds only credit. This OPTIONAL extension closes it: the leaf raise is signed *before* the preimage is revealed, hash-locked to the same preimage, so the user holds an enforceable settled entitlement that revealing *activates* — a receive extends zero trust while headroom exists.
 
@@ -615,7 +627,19 @@ Both spend paths are **relative** locks, so the construction is sound over the d
 
 **[B-68]** A deployment MAY offer atomic receive. Where offered: the mirror MUST be funded from existing leaf headroom; every spend path of a mirror MUST be relative-locked (no absolute timelock may appear anywhere in a leaf commitment); a Client MUST NOT reveal the preimage before holding its fully signed `n+1` state; and a Client with unresolved mirrors MUST retain their preimages as part of the exit package ([B-50], §20.2).
 
-**[B-69]** At most `N_mirror` mirrors may be concurrently unresolved per leaf (§19). All mirrors MUST be resolved — consolidated or reverted — before a refresh snapshot; for quiescence purposes ([B-30]) an unresolved mirror counts as in-flight. `Δ_htlc ≥ Δ_rev` (§19), giving the operator a reclaim window no shorter than the penalty window.
+**[B-69]** At most `N_mirror` mirrors (of either direction, §19) may be concurrently unresolved per leaf. All mirrors MUST be resolved — consolidated or reverted — before a refresh snapshot; for quiescence purposes ([B-30]) an unresolved mirror counts as in-flight. `Δ_htlc ≥ Δ_rev` (§19), giving the reclaiming party a window no shorter than the penalty window.
+
+**Send mirror (the symmetric twin).** An outgoing payment of `x` with hash `h` MAY be secured the same way: leaf state `n+1` moves `x` out of the sender's `u` into a **send-mirror output**:
+
+```text
+send_mirror(x, h):  (P_O key + preimage of h, no delay)
+                  ∨ (U_i key, after CSV Δ_htlc)
+                  ∨ (counterparty revocation path of state n+1, per [B-25])
+```
+
+If the payment completes (preimage revealed), the operator is entitled to `x`; if it never does, the sender reclaims after `Δ_htlc`. This *improves* on the base send flow: the plain [B-26] decrease-first ordering leaves a failed sender transiently under-settled until a cooperative raise-back, whereas the send mirror makes the decrease itself conditional on the payment's outcome — the sender is never under-settled and the operator is never over-exposed, at any instant, in either outcome. **[B-70]** Where mirrors are offered: a send mirror MUST be funded from the sender's `u`; all its spend paths MUST be relative-locked; a send-mirror state `n+1` satisfies [B-26] by construction (the operator MAY forward upon holding it, since settlement entitles it to exactly `x`); and the send mirror is the RECOMMENDED mechanism for [B-26] compliance where available. [B-68]'s exit-package, reveal-discipline, and consolidation rules apply to send mirrors mutatis mutandis (the *operator* retains the preimage claim for its exit if consolidation is refused).
+
+**Atomic internal transfer.** For a payment between two members of the system, compose all three legs on one hash `h`: the sender's send mirror, the overlay vUSDT HTLC(s), and the receiver's receive mirror. A single preimage revelation settles every leg simultaneously — sender's settled balance down `x`, receiver's settled balance up `x`, overlay accounting matched — with no instant at which any party holds unmatched credit or exposure. This is the protocol's native form of a vUSDT⇄canonical atomic swap: routed HTLCs over leaves remain impossible ([B-64]), so atomicity is achieved as bilateral CSV-locked mirrors hub-and-spoked through the operator, whose net position across the two leaves is zero in both outcomes. Consolidation of both leaves to clean states follows per the receive-mirror protocol.
 
 ---
 
@@ -873,7 +897,7 @@ Before `H_exp`, the operator's only capabilities on tree outputs are the cosigne
 | Revocation delay | `Δ_rev` | ≥ 144 | 144 blocks |
 | Activation depth | `k` | ≥ 6 | 6 |
 | Receive-mirror timeout | `Δ_htlc` | ≥ `Δ_rev`; relative (CSV) only (§11.8) | 288 blocks |
-| Concurrent mirrors per leaf | `N_mirror` | ≥ 1 where §11.8 offered | 2 |
+| Concurrent mirrors per leaf (both directions) | `N_mirror` | ≥ 1 where §11.8 offered | 2 |
 | Confirmation target | `T_conf` | per A6 envelope | 36 blocks |
 | Min settled balance | `R_min` | ≥ §16.4 rationality floor and RGB minimums | deployment-computed |
 | Leaf BTC value | `btc_leaf` | all downstream outputs standard | 10,000 sat |
@@ -1024,11 +1048,11 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 
 All MUST-level requirements by conformance target. Requirement B-46 carries only SHOULD force and is therefore intentionally absent here; it remains normative guidance in §16.2.
 
-**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format), B-65 (BTC profile: operator disclosure, client display), B-68 and B-69 (atomic receive, where offered: client reveal discipline and preimage retention; both endpoints' mirror construction, caps, and pre-snapshot resolution).
+**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format), B-65 (BTC profile: operator disclosure, client display), B-68 and B-69 (atomic mirrors, where offered: client reveal discipline and preimage retention; both endpoints' mirror construction, caps, and pre-snapshot resolution), B-70 (send mirrors, where offered: both endpoints' construction and [B-26]-compliance semantics).
 
 **BTC profile (Appendix B) additionally:** B-66 (operator: explicit profile claim; R-1 exempt, R-2 not).
 
-**Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58, B-60, B-61 (B-60/B-61 additionally bind committee members in deployments offering §21.2), B-67.
+**Operator:** B-01, B-06, B-07, B-08, B-09, B-10, B-15, B-19, B-20, B-21, B-22, B-23, B-26, B-31, B-32, B-33, B-34, B-35, B-36, B-40, B-41, B-42, B-43, B-44, B-45, B-47, B-55, B-56, B-57, B-58, B-60, B-61 (B-60/B-61 additionally bind committee members in deployments offering §21.2), B-67, B-71 (deployments serving internal institutional members).
 
 **Client:** B-02, B-03, B-12, B-14, B-16, B-18, B-28, B-29, B-37, B-49, B-50, B-51, B-52, B-53, B-54.
 
