@@ -514,8 +514,9 @@ The full liquidity-management stack, cheapest first:
 |---|---|---|---|
 | Mirrors / `ω`-rotation (§11.8) | balances within fixed capacities | none | n/a (balance updates) |
 | Pre-provisioned headroom (§9.6, [B-71]) | nothing — capacity placed in advance | none | n/a |
-| Branch rollover (§10.5, [B-73]) | capacity within one subtree, mid-epoch | `depth(j)+1` txs | ancestor conflict |
-| Full-cohort rollover ([B-62]) | everything | 1 tx | root conflict |
+| DW factory update (§10.6, [B-74]) | capacity within one factory, budget-bounded | none | decrementing-delay priority |
+| Branch rollover (§10.5, [B-73]) | capacity within one subtree; resets factory budgets | `depth(j)+1` txs | ancestor conflict |
+| Full-cohort rollover ([B-62]) | everything; resets all budgets | 1 tx | root conflict |
 | Partitioned epoch (§8–§9) | everything, absentees kept safe | 1 tx + forfeits | connector-bound forfeits |
 
 **[B-71]** A deployment serving internal institutional members MUST include, in its [B-58] capital model, a corridor-level analysis: per-corridor flow velocity, the headroom provisioned for each internal member, the shard rollover cadence, and the resulting recovery horizon — acknowledging that corridor velocity rather than TVL sizes the float and headroom for these flows (§9.4).
@@ -586,7 +587,20 @@ The new sub-tree hangs off a **confirmed** output, so T1/T2 apply to it verbatim
 
 **Placement guidance.** Cost is `depth(j) + 1` transactions amortized across the branch, so deployments SHOULD place high-velocity corridor subtrees (§9.6) as direct children of the cohort root, making a mid-epoch re-slice ~2 transactions for the entire corridor.
 
-**[B-73]** A branch rollover MUST: be signed by the full `Agg(S_j ∪ {O})` with the [B-62] package-first ordering applied to the node-`j` spend (no member signs before holding its verified new package; partial branch rollovers are forbidden — all of `S_j` or nothing); take initial leaf states from a [B-30]-quiescent branch snapshot with mirrors resolved ([B-69]); conserve node `j`'s total value across the new leaves; carry one uniform expiry `H_exp′ ≥ H_exp^N` across all new outputs; and be treated as effective only at `k` confirmations, with a failed or front-run re-slice treated as an abort restoring the status quo ([B-10] analog). *Audit note:* branch rollover is the newest mechanism in this specification — it reuses [B-62]/[B-63]'s atomicity argument and T1's exclusivity logic without new assumptions, but reviewers SHOULD give it the scrutiny of a fresh construction, including the front-running and fee-race surfaces under [B-49]'s anchor policy.
+**[B-73]** A branch rollover MUST: be signed by the full `Agg(S_j ∪ {O})` with the [B-62] package-first ordering applied to the node-`j` spend (no member signs before holding its verified new package; partial branch rollovers are forbidden — all of `S_j` or nothing); take initial leaf states from a [B-30]-quiescent branch snapshot with mirrors resolved ([B-69]); conserve node `j`'s total value across the new leaves; carry one uniform expiry `H_exp′ ≥ H_exp^N` across all new outputs; and be treated as effective only at `k` confirmations, with a failed or front-run re-slice treated as an abort restoring the status quo ([B-10] analog). *Audit note:* branch rollover is among the newest mechanisms in this specification — it reuses [B-62]/[B-63]'s atomicity argument and T1's exclusivity logic without new assumptions, but reviewers SHOULD give it the scrutiny of a fresh construction, including the front-running and fee-race surfaces under [B-49]'s anchor policy.
+
+### 10.6 Updatable nodes: Decker–Wattenhofer channel factories (optional)
+
+Branch rollover pays on-chain per re-slice. Where a small, always-online member set exists — a client with its corridor exchanges and the operator — a node MAY instead be made **updatable off-chain** as a multiparty channel factory with Decker–Wattenhofer invalidation:
+
+- A *factory node* is an output `Agg(F ∪ {P_O})`, `F` its member set. Its child allocation (channels/leaves for the members) is replaced by having **all** members sign a new allocation transaction spending the factory output with input `nSequence = Δ_max − r·Δ_step` at the `r`-th reallocation — each state carries a **strictly smaller relative delay** than its predecessor, so on any unroll the newest state becomes consensus-valid `Δ_step` blocks before its predecessor and confirms first.
+- Because invalidation uses only relative locks, the construction is sound over the unconfirmed tree — the same property that admits `Δ_leaf`, forfeits, and mirrors. The newest allocation is a single transaction held fully-signed by *every* member, so any one honest member can broadcast it: the exit race is all-honest-members versus one adversary.
+- The **delay budget is finite**: `N_realloc = (Δ_max − Δ_min)/Δ_step` reallocations per factory per epoch (layerable into multi-level invalidation trees for `≈ N_realloc^layers` states, at the cost of deeper unrolls and longer exits). A factory whose budget exhausts, or any of whose members wedges, MUST fall back to a branch rollover (§10.5) or the next epoch — both of which also **reset** the budget.
+- The factory's outstanding worst-case delay adds to every member's exit latency: the §14.4 margin formula gains a `Δ_fact` term, and Clients MUST treat their exit deadline accordingly.
+
+**[B-74]** A factory MUST: use relative locks only, with `Δ_step` sized for adversarial congestion (§19) and **no delay level ever reused** (reuse creates an unresolvable same-delay race); include in `F` every party whose channel the factory contains; collect all members' signatures on each new state before any member treats it as current, with each member retaining the newest fully-signed state in its exit package ([B-50]); charge the path's total `Δ_fact` against the exit margin per §14.4; and reset (never extend) its delay chain only via §10.5 or an epoch. Deployments MUST disclose factory member sets and budgets in the [B-58] capital model, noting the wedge blast-radius of members (such as exchanges) that cosign many factories, and that factory members see each other's allocations (§22 applies).
+
+**Prior art.** This mechanism is not novel to this specification: nodes-as-DW-factories over a pre-signed timeout tree, laddered across overlapping funding epochs, is the architecture of ZmnSCPxj's **SuperScalar** (laddered timeout-tree-structured Decker–Wattenhofer channel factories), building on Burchert–Decker–Wattenhofer factories and John Law's timeout trees — whose leaf `(client ∨ operator-after-timeout)` pattern is likewise this specification's §7 expiry-path structure, and whose ladder corresponds to our overlapping cohorts (§9.3). This document's distinct contributions relative to that line are the settled-asset layer (RGB canonical USDT, D-VS), the credit overlay with its float accounting (I3/I4), payment-atomic mirrors into the factory/leaf layer (§11.8), forfeit-based partitioned epochs that keep *offline* users' claims alive (§8–§9, vs timeout-tree forced exit), committee-mode roll-forward (§21.2), the on-chain branch-rollover reset (§10.5), and the formal companion. Reviewers SHOULD consult the SuperScalar analysis for the DW-factory component's known trade-offs.
 
 ---
 
@@ -777,10 +791,10 @@ The user-facing deadline for *starting* a unilateral exit from epoch `N` is:
 
 ```text
 D_exit^N = H_exp^N − M
-M ≥ depth · T_conf + Δ_leaf + Δ_rev + 2 · T_conf + B      (all in blocks)
+M ≥ depth · T_conf + Δ_fact + Δ_leaf + Δ_rev + 2 · T_conf + B      (all in blocks)
 ```
 
-with `depth = ⌈log_r |S_N|⌉` unroll confirmations at target `T_conf` each, the leaf commitment delay `Δ_leaf` followed by one commitment confirmation, the to-holder claim delay `Δ_rev` followed by one claim confirmation, and buffer `B` for fee spikes and reorgs (≥ `k`). (Deadline sufficiency is proven as Corollary T2.1 of the formal companion.) **[B-39]** Deployments MUST publish `M` (with the parameter set, §19) and Clients MUST treat `D_exit` as the hard deadline: a user who has not refreshed by `D_exit` MUST begin unilateral exit (subject to the user override in [B-49]).
+with `depth = ⌈log_r |S_N|⌉` unroll confirmations at target `T_conf` each, `Δ_fact` the sum of the worst-case outstanding factory delays on the user's path (§10.6; zero where no updatable nodes are used), the leaf commitment delay `Δ_leaf` followed by one commitment confirmation, the to-holder claim delay `Δ_rev` followed by one claim confirmation, and buffer `B` for fee spikes and reorgs (≥ `k`). (Deadline sufficiency is proven as Corollary T2.1 of the formal companion; the `Δ_fact` term is item 12 of its §9.) **[B-39]** Deployments MUST publish `M` (with the parameter set, §19) and Clients MUST treat `D_exit` as the hard deadline: a user who has not refreshed by `D_exit` MUST begin unilateral exit (subject to the user override in [B-49]).
 
 ### 14.5 Expiry sweep
 
@@ -951,6 +965,8 @@ Before `H_exp`, the operator's only capabilities on tree outputs are the cosigne
 | Activation depth | `k` | ≥ 6 | 6 |
 | Receive-mirror timeout | `Δ_htlc` | ≥ `Δ_rev`; relative (CSV) only (§11.8) | 288 blocks |
 | Concurrent mirrors per leaf (both directions) | `N_mirror` | ≥ 1 where §11.8 offered | 2 |
+| Factory delay step | `Δ_step` | ≥ `max(k, T_conf)`; sized for adversarial congestion (§10.6) | 144 blocks |
+| Factory delay budget | `Δ_max − Δ_min` | fits the §14.4 margin: `M` (with `Δ_fact`) `< W_exp/2` | 1,008 blocks (~7 reallocations per layer); raise recommended `M` to 4,032 where factories are used |
 | Confirmation target | `T_conf` | per A6 envelope | 36 blocks |
 | Min settled balance | `R_min` | ≥ §16.4 rationality floor and RGB minimums | deployment-computed |
 | Leaf BTC value | `btc_leaf` | all downstream outputs standard | 10,000 sat |
@@ -1101,7 +1117,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 
 All MUST-level requirements by conformance target. Requirement B-46 carries only SHOULD force and is therefore intentionally absent here; it remains normative guidance in §16.2.
 
-**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format), B-65 (BTC profile: operator disclosure, client display), B-68 and B-69 (atomic mirrors, where offered: client reveal discipline and preimage retention; both endpoints' mirror construction, caps, and pre-snapshot resolution), B-70 (send mirrors, where offered: both endpoints' construction and [B-26]-compliance semantics), B-72 (pure-leaf mode, where offered: operator overlay-free settlement and bounce propagation; client mirror-only acceptance), B-73 (branch rollover: client package-first signing of the node spend; operator construction, quiescent snapshot, uniform expiry, k-confirmation discipline).
+**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format), B-65 (BTC profile: operator disclosure, client display), B-68 and B-69 (atomic mirrors, where offered: client reveal discipline and preimage retention; both endpoints' mirror construction, caps, and pre-snapshot resolution), B-70 (send mirrors, where offered: both endpoints' construction and [B-26]-compliance semantics), B-72 (pure-leaf mode, where offered: operator overlay-free settlement and bounce propagation; client mirror-only acceptance), B-73 (branch rollover: client package-first signing of the node spend; operator construction, quiescent snapshot, uniform expiry, k-confirmation discipline), B-74 (DW factories, where offered: all-member signing and state retention; operator delay accounting, no-reuse discipline, disclosure).
 
 **BTC profile (Appendix B) additionally:** B-66 (operator: explicit profile claim; R-1 exempt, R-2 not).
 
