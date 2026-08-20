@@ -506,7 +506,17 @@ High-volume counterparties — exchanges, merchants, other LSPs — SHOULD be br
 
 **Capital mechanics of internal transfers.** Leaf capacities are frozen within an epoch (§15.3), so an internal transfer of `x` does not move value between leaf outputs on-chain: it grows the operator's share `ω` in the sender's leaf by `x` (a locked receivable) and spends `x` of the operator's pre-committed headroom in the receiver's leaf. The operator's *net* position is zero in every transfer, but both legs occupy locked outputs until the next epoch re-slices allocations. Internalization therefore does not make transfers capital-free within an epoch; what it changes is the recovery horizon — from "external float drained, recovered at reclamation lag" to "capital rotated internally, recovered at epoch cadence" — and it removes the external liquid outflow entirely.
 
-**Corridor sharding — the reallocation mechanism.** In-place reallocation between live leaves is impossible (tapret commitments are fixed at signing); the only re-slicing primitive is the epoch itself. The intended deployment pattern is therefore: place the internal member and its active counterparties in a **dedicated shard** and roll that shard's cohort frequently via full-cohort rollover ([B-62]) — draining swollen sender-`ω` back into receiver headroom in one atomic transaction, at ~1× capital, with no forfeits or connectors. The [B-62] all-online precondition is realistic precisely here: institutional members are always online and active users are by definition active. Retail long-tail shards keep a slower cadence; the two populations' capital profiles are decoupled by construction.
+**Corridor sharding — the reallocation mechanisms.** In-place reallocation between live leaves is impossible (tapret commitments are fixed at signing, and leaf-level closures are forbidden by the §10.5 governing law); the only re-slicing primitives are ancestor conflicts — the epoch/full-cohort rollover ([B-62]) at the root, and the **branch rollover** (§10.5) at any internal node mid-epoch. The intended deployment pattern: place the internal member and its active counterparties in a **dedicated, root-adjacent subtree** and re-slice it as needed — a ~2-transaction branch rollover mid-epoch when corridor headroom drains, and the scheduled full rollover otherwise — draining swollen sender-`ω` back into receiver headroom atomically, at ~1× capital, with no forfeits or connectors. The all-online precondition is realistic precisely here: institutional members are always online and active users are by definition active. Retail long-tail shards keep a slower cadence; the two populations' capital profiles are decoupled by construction.
+
+The full liquidity-management stack, cheapest first:
+
+| Mechanism | Moves | On-chain cost | Old states killed by |
+|---|---|---|---|
+| Mirrors / `ω`-rotation (§11.8) | balances within fixed capacities | none | n/a (balance updates) |
+| Pre-provisioned headroom (§9.6, [B-71]) | nothing — capacity placed in advance | none | n/a |
+| Branch rollover (§10.5, [B-73]) | capacity within one subtree, mid-epoch | `depth(j)+1` txs | ancestor conflict |
+| Full-cohort rollover ([B-62]) | everything | 1 tx | root conflict |
+| Partitioned epoch (§8–§9) | everything, absentees kept safe | 1 tx + forfeits | connector-bound forfeits |
 
 **[B-71]** A deployment serving internal institutional members MUST include, in its [B-58] capital model, a corridor-level analysis: per-corridor flow velocity, the headroom provisioned for each internal member, the shard rollover cadence, and the resulting recovery horizon — acknowledging that corridor velocity rather than TVL sizes the float and headroom for these flows (§9.4).
 
@@ -556,6 +566,27 @@ Each tree transaction carries the RGB transition sub-allocating its input's USDT
 ### 10.4 Sibling independence
 
 Transactions in disjoint subtrees do not conflict. One user's unroll broadcasts only their path; a shared prefix already broadcast by any co-member reduces every descendant's remaining exit cost (§16.3). No user action can invalidate another user's path — conflicting spends of shared ancestors cannot be created after the ceremony ([B-07], §7.3).
+
+### 10.5 Branch rollover (mid-epoch subtree re-slice)
+
+**The governing law.** A pre-signed competing spend (a member's old commitments) can never be un-signed; it can be defeated in exactly two ways: (i) *out-raced* via the `Δ_leaf` delay asymmetry plus chain-watching — sound only when racer, beneficiary, and watcher are the same party (the operator; this is the forfeit, §13), and **never** sound as backing for a third party's claim; or (ii) *killed by consensus conflict* — confirming, on-chain, a spend of a **common ancestor**, after which every descendant of the old version is invalid by Bitcoin itself. Consequently, "closing" a virtual leaf to fund another member's channel is forbidden by construction (the closure merely races the old commitments), and capacity reallocation MUST use ancestor conflict. The full-cohort rollover ([B-62]) is ancestor conflict at the root; **branch rollover** is the same mechanism at any internal node.
+
+**Procedure.** For internal node `j` with subtree members `S_j`:
+
+1. **Quiesce the branch**: each member of `S_j` resolves mirrors and snapshots balances (§12's discipline scoped to the branch).
+2. **Construct and validate** a fresh sub-tree re-slicing node `j`'s total value into new leaves (any allocation the members agree to — refilled headroom, resized or new leaves), with initial leaf states equal to the snapshot; members verify conservation and their own leaves (V-checks scoped to the branch value).
+3. **Sign** one *re-slice transaction* spending node `j`'s output via `Agg(S_j ∪ {O})`, under the package-first discipline of [B-62] verbatim.
+4. **Broadcast** the pre-signed prefix from the cohort output down to `j` (anyone may, §10.4), then the re-slice with CPFP; treat the rollover as effective only at `k` confirmations.
+
+The new sub-tree hangs off a **confirmed** output, so T1/T2 apply to it verbatim with the re-slice output in the cohort-output role. Every old descendant state of the branch — including a malicious member's stashed commitments — is consensus-dead once the re-slice is `k`-deep: no race, no watch, no forfeits, no connectors.
+
+**Failure and griefing analysis.** If the re-slice never confirms, node `j`'s old children remain valid and the branch continues unchanged — abort-safe by the same single-transaction argument as [B-62]. A malicious member MAY front-run by broadcasting an old pre-signed child of `j`, creating a genuine mempool conflict; but the stakes are only *which consistent state confirms* (the re-slice's initial states equal current balances, so the old slicing preserves everyone's exact holdings), never whether anyone gets paid. Front-running is therefore a fee-costing, status-quo-preserving DoS — categorically unlike the leaf-close race that motivates this section, where losing meant a third party's principal.
+
+**Expiry re-arm.** The re-slice's outputs carry fresh scripts and MAY bear a later uniform expiry `H_exp′ ≥ H_exp^N` — the old expiry paths live on ancestor outputs that are now confirmed *and spent*, hence moot for this branch. A frequently rolled branch thus never faces `D_exit`. This refines [B-09] rather than violating it: uniform expiry holds *per rolled branch*, preserving the rule's intent of a single deadline number per claim.
+
+**Placement guidance.** Cost is `depth(j) + 1` transactions amortized across the branch, so deployments SHOULD place high-velocity corridor subtrees (§9.6) as direct children of the cohort root, making a mid-epoch re-slice ~2 transactions for the entire corridor.
+
+**[B-73]** A branch rollover MUST: be signed by the full `Agg(S_j ∪ {O})` with the [B-62] package-first ordering applied to the node-`j` spend (no member signs before holding its verified new package; partial branch rollovers are forbidden — all of `S_j` or nothing); take initial leaf states from a [B-30]-quiescent branch snapshot with mirrors resolved ([B-69]); conserve node `j`'s total value across the new leaves; carry one uniform expiry `H_exp′ ≥ H_exp^N` across all new outputs; and be treated as effective only at `k` confirmations, with a failed or front-run re-slice treated as an abort restoring the status quo ([B-10] analog). *Audit note:* branch rollover is the newest mechanism in this specification — it reuses [B-62]/[B-63]'s atomicity argument and T1's exclusivity logic without new assumptions, but reviewers SHOULD give it the scrutiny of a fresh construction, including the front-running and fee-race surfaces under [B-49]'s anchor policy.
 
 ---
 
@@ -1070,7 +1101,7 @@ Every item below is **scoped and bounded**: each has an owner-facing acceptance 
 
 All MUST-level requirements by conformance target. Requirement B-46 carries only SHOULD force and is therefore intentionally absent here; it remains normative guidance in §16.2.
 
-**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format), B-65 (BTC profile: operator disclosure, client display), B-68 and B-69 (atomic mirrors, where offered: client reveal discipline and preimage retention; both endpoints' mirror construction, caps, and pre-snapshot resolution), B-70 (send mirrors, where offered: both endpoints' construction and [B-26]-compliance semantics), B-72 (pure-leaf mode, where offered: operator overlay-free settlement and bounce propagation; client mirror-only acceptance).
+**Joint (both targets):** B-04, B-05, B-11, B-13, B-17, B-24, B-25, B-27, B-30, B-38, B-39, B-48, B-59 (operator: disclosure; client: display and consent), B-62 (client: package-first signing; operator: all-or-fallback broadcast), B-63 (client: package-first deposit signing and leaf verification; operator: ceremony-only acceptance), B-64 (both endpoints implement the leaf commitment format), B-65 (BTC profile: operator disclosure, client display), B-68 and B-69 (atomic mirrors, where offered: client reveal discipline and preimage retention; both endpoints' mirror construction, caps, and pre-snapshot resolution), B-70 (send mirrors, where offered: both endpoints' construction and [B-26]-compliance semantics), B-72 (pure-leaf mode, where offered: operator overlay-free settlement and bounce propagation; client mirror-only acceptance), B-73 (branch rollover: client package-first signing of the node spend; operator construction, quiescent snapshot, uniform expiry, k-confirmation discipline).
 
 **BTC profile (Appendix B) additionally:** B-66 (operator: explicit profile claim; R-1 exempt, R-2 not).
 
