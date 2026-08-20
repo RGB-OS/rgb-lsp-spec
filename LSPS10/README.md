@@ -57,7 +57,7 @@ The federation is a **validated signer, not a blind signer**: every
 member independently re-validates every fact — Bitcoin chain state,
 RGB consignments, ledger invariants, incident policy — before
 contributing its signature share to any operation, so a compromised
-LSP colluding with a minority of federation members gains nothing.
+LSP colluding with up to k−1 federation members gains nothing.
 
 ### Why tokens and backing are separate layers
 
@@ -112,11 +112,13 @@ LSP colluding with a minority of federation members gains nothing.
    velocity-limited hot grant budget), never by its transport float
    and never by user backed balances
    (§ [Compromise Containment](#compromise-containment)).
-8. **Explicit degradation.** Loss of federation liveness (up to n−k
-   members offline) MUST NOT affect user custody or in-channel token
-   movement; backed-payment finality degrades along the explicit
-   policy of § [Liveness](#liveness-and-degraded-operation), and
-   issuance/redemption pause.
+8. **Explicit degradation.** With up to n−k members unavailable,
+   all federation operations continue through the k-of-n fallback
+   path. Beyond that (n−k+1 or more offline), user custody and
+   in-channel token movement MUST remain unaffected; backed-payment
+   finality degrades along the explicit policy of
+   § [Liveness](#liveness-and-degraded-operation), and issuance and
+   redemption pause.
 
 ## Definitions
 
@@ -355,6 +357,12 @@ UTXOs, and the ledger-seal UTXO MUST be Taproot outputs with:
   quorum. A FROST-style threshold key path MAY replace this
   construction once implementations mature.
 
+Normal operation signs through the key path with all n members; when
+up to n−k members are unavailable, k-quorums sign through the
+tapscript fallback (latency may increase, operations continue).
+Ledger operations — locks, claims, epoch roots — are threshold-signed
+at k throughout.
+
 The public reserve lower bound (§ Proof of Solvency) is conditional
 on the canonical contract's issuer rights: if the canonical schema
 supports freeze or clawback via issuer-side global state, an
@@ -385,6 +393,22 @@ n MUST be ≥ 4; n = 7 with k = 5 is RECOMMENDED. Theft requires k
 compromised members; liveness loss requires n−k+1 failures. k MUST
 exceed n/2 so two disjoint quorums cannot exist.
 
+### Federation identity anchor
+
+The federation's identity MUST NOT be learned from an LSP or a
+front-end — otherwise a malicious LSP could point wallets at a sham
+federation whose forged locks make counterfeit vUSDT appear backed,
+defeating Flow P at the root. The vUSDT contract genesis MUST commit
+the initial member key set, n and k, the lock-verification key, and
+the genesis seals of the rights and ledger chains; every membership
+or key rotation thereafter is an ADMIN operation anchored through
+the ledger seal chain. A wallet that has validated the vUSDT asset
+therefore derives the current federation keys from Bitcoin-anchored
+history alone: it MUST pin the asset id, resolve the member set from
+genesis plus anchored rotations, and treat every endpoint — including
+`federation_endpoint` from `lsps10.get_info` — as untrusted transport
+whose responses are checked against the derived keys.
+
 ## LSP Registration and Authority Model
 
 Every LSP registers before receiving transport issuance. Registration
@@ -401,10 +425,15 @@ The governing principle is a **one-way valve with a metered spout**:
 * Toward the federation, or risk-reducing: hot-authorized — sweeps
   (fixed destination), incident *proposals*.
 * Out of federation control: cold-gated — `withdraw` (allowlisted
-  destinations registered cold, additions delayed with
-  notification), `refill` of the hot grant budget, `settle`.
-  `withdraw` MUST additionally be delayed by at least the maximum
-  lock validity, so in-flight grants land before balance leaves.
+  destinations registered cold), `refill` of the hot grant budget,
+  `settle`. A destination addition takes effect only after a
+  mandatory delay during which it is **published in the signed event
+  log and delivered to federation ADMIN** — a delay nobody can act
+  on is decorative — and any member MAY propose an incident against
+  a contested addition, freezing the LSP's `withdraw` until
+  resolved. `withdraw` MUST additionally be delayed by at least the
+  maximum lock validity, so in-flight grants land before balance
+  leaves.
 * The metered spout: day-to-day grants to customers come from the
   **hot grant budget** — capped in size, velocity-limited per epoch,
   and refillable only cold. A total hot compromise can drain at most
@@ -471,7 +500,9 @@ is real.
 2. **Attach.** The sender attaches the lock proof (the signed lock
    statement) to the payment's final-hop TLV payload.
 3. **Verify, then settle.** The recipient's wallet verifies the lock
-   offline against the published federation keys: signature valid,
+   offline against the federation keys derived from the identity
+   anchor (§ [Federation identity anchor](#federation-identity-anchor)):
+   signature valid,
    amount ≥ invoice amount, payment hash matches, beneficiary key is
    its own, expiry leaves at least a safety window. A compliant
    wallet **MUST NOT release the preimage** — i.e. MUST fail the
@@ -707,7 +738,7 @@ returns every output and RGB allocation to federation-derived seals.
 
 #### CREDIT-OUT
 `withdraw`: cold signature valid; destination on the cold-registered
-allowlist past its addition delay; amount within `A[LSP]` net of
+allowlist, past its addition delay and uncontested; amount within `A[LSP]` net of
 escrow and holds; the mandatory delay ≥ maximum lock validity has
 elapsed; post-state solvency invariant holds; no active incident for
 the LSP. `refill` and `settle`: cold signatures; amounts within
@@ -799,7 +830,16 @@ compromise of an LSP's *own* authority:
 
 The timelocked recovery path allows a designated quorum to move
 federation funds after a long CSV delay if the federation permanently
-loses k-liveness. If reserves are impaired below the invariant (e.g.
+loses k-liveness. Because `OP_CSV` is relative to each UTXO's
+confirmation, routine RESERVE-SPEND activity (key-rotation rolls at
+least once per recovery period) automatically resets the recovery
+clock: the path ripens only if the federation has been genuinely
+unable to move funds for the entire window, so a DoS that merely
+partitions members cannot open it while any k-quorum still functions.
+Third-party monitors SHOULD alarm as any federation UTXO approaches
+recovery ripeness. Recovery-quorum composition MUST be diverse and
+independent of the member set (details:
+[Open Questions](#open-questions)). If reserves are impaired below the invariant (e.g.
 issuer action), the federation MUST suspend deposits and locks and
 switch redemption to a published **pro-rata mode over attribution
 balances** (never over token holdings).
@@ -943,7 +983,9 @@ open question.
 
 ## API (Draft)
 
-Transport follows [LSPS0][]. Methods are namespaced `lsps10.*`
+Transport follows [LSPS0][]: REST JSON APIs, with the method names
+below mapping to endpoint paths (e.g. `POST /lsps10/get_info`).
+Methods are namespaced `lsps10.*`
 (client ↔ LSP) and `lsps10.fed.*` (anyone ↔ federation). All
 `*_uusdt` fields are [<LSPS10.uusdt>][]; all `*_at` fields are
 [<LSPS0.datetime>][]; `psbt` and `*_consignment*` fields are
@@ -952,9 +994,9 @@ Transport follows [LSPS0][]. Methods are namespaced `lsps10.*`
 
 ### lsps10.get_info (client ↔ LSP)
 
-| JSON-RPC Method | lsps10.get_info |
-|-----------------|-----------------|
-| Idempotent      | Yes             |
+| Method     | lsps10.get_info |
+|------------|-----------------|
+| Idempotent | Yes             |
 
 ```json
 {
@@ -1124,8 +1166,9 @@ path. The `lsps10.fed.create_ln_redemption` namespace is reserved.
 9. **FROST migration** — replacing MuSig2 + tapscript fallback with
    a threshold key path for federation UTXOs.
 10. **Governance** — membership admission/removal, recovery-quorum
-    composition, parameter-change procedure (v1: static membership,
-    ADMIN thresholds as specified).
+    composition and a challenge/veto procedure for recovery attempts
+    during induced liveness failures, parameter-change procedure
+    (v1: static membership, ADMIN thresholds as specified).
 
 ## References
 
