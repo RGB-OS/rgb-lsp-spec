@@ -30,7 +30,7 @@ Describes the basics of how clients and RGB LSPs communicate to each other.
 A channel purchase API to buy RGB denominated channels channels from an LSP.
 
 ### **LSPS10** [Self-Custodial Stablecoin Channels with Federated Redemption](LSPS10/README.md)
-Self-custodial USDT-denominated Lightning balances (vUSDT) backed 1:1 by canonical USDT reserves held by a k-of-n TEE federation, with LSP-independent redemption and a validated-signer (non-blind) federation security model.
+Self-custodial USDT-denominated Lightning balances via vUSDT, a federation-issued working asset backed 1:1 by canonical RGB USDT locked in k-of-n TEE federation custody, with atomic LSP-independent redemption and a validated-signer (non-blind) federation security model.
 
 ## Services
 List of RGB Lightning Service Providers in alphabetic order that currently or will support LSP specs in future.
