@@ -1306,3 +1306,29 @@ Same construction class (the v0.1 review's framing): cosigned rounds, connector-
 | Vanilla LSP (real asset channels) | ~1× of *capacity* ≈ 3–10× TVL at real utilization | none, immediately, per channel |
 
 Vanilla channels win only where capacity ≈ balances (saturated, static populations); the synthetic overlay exists precisely because inbound *capacity* — not realized balances — is what real capital utilization makes expensive (§4.4, §6.3).
+
+### C.4 Liquidity requirements matrix
+
+*Steady-state, per unit of user balance. SuperScalar figures are design-dependent (proposal, not deployment). For the USDT deployment this spec additionally carries the D-VS dependency none of the neighbors do; the unconditional apples-to-apples row is the BTC profile (Appendix B).*
+
+**Operator side:**
+
+| | Vanilla LSP | This spec | SuperScalar | Ark |
+|---|---|---|---|---|
+| Inbound capacity | real asset locked per channel: ~1× of *capacity* ≈ 3–10× TVL at real utilization; reassign = splice/close per user | pooled headroom `ω`, re-sliced at rollover/factory cadence; overlay capacity free (§6.3) | real BTC pooled per factory, reassignable off-chain (DW) — vanilla's capital at far better utilization | none — vtxos move whole |
+| Working capital | none beyond capacity | parked receivables `(multiple−1)×` refreshing TVL → ~0.5–1× rational dial; ~0.1–0.5× blended with §21.2 | ladder lockup: liquidity × rung overlap (same overlap arithmetic as our cohorts) | round fronting `min(T_reclaim, W_exp)/C × TVL` — identical formula to §9.4 |
+| Float / credit | routing float; zero credit | corridor-velocity float (§9.4) + `Σ pending ≤ X_global`, I4-covered | zero — no credit tier | zero credit; boarding/gateway float |
+| Recovery | per-user on-chain ops | rollovers / branch rollover / free factory updates / expiry sweep | rung timeout (dying phase) | round expiry / all-forfeited sweep |
+| Rough total per $1M TVL | $3–10M | $1.1–2M (→ ~$1.1–1.5M with §21.2 + §9.6) | ~$1–3M by ladder depth and utilization | $1.1–2M at comparable dial |
+
+**User side:**
+
+| | Vanilla LSP | This spec | SuperScalar | Ark |
+|---|---|---|---|---|
+| Funds origin | own deposit + liquidity fees | own deposit; §9.5 atomic onboarding = zero trust window | own deposit / LSP-assigned | own deposit (boarding) |
+| Exit fee reserve | 1 force-close tx | `depth + 2` txs, CPFP ([B-47]; P2A allows third-party bumping) | full DW delay-stack unroll — heaviest of the four | round-tree unroll, comparable to ours |
+| Liveness obligation | none (revocation watch only) | refresh-or-exit by `D_exit`; **zero if parked** (§21.2, G1′) | migrate every ladder rung or lose to timeout — strictest | refresh every round cycle |
+| Receive prerequisite | LSP capacity, then instantly trustless | headroom → trustless (mirrors §11.8); beyond → capped credit; pure-leaf → bounce | assigned liquidity, no credit fallback (payment fails) | in-round trustless; oor = recipient trusts sender+ASP until next round |
+| Offline receive | no | credit-tier only, bounded; G1′ extension possible | no | no |
+
+**Reading the matrix.** The four designs are two capital philosophies: vanilla and SuperScalar pay for *capacity* with locked real asset (SuperScalar being vanilla's pooled, off-chain-reassignable, high-utilization form); this spec and Ark pay for *time* — capital fronted per epoch/round and recovered at a dialed cadence, with realized balances as the base. Receive-heavy, low-utilization populations favor the time-based side by the utilization factor. Within the time-based pair the operator formula is identical; the difference is where receive-side risk lands — Ark on recipients (free for the ASP), this spec on operator headroom plus capped, I4-covered credit. User-side the ranking inverts by dimension (cheapest exit: vanilla; lightest liveness: vanilla, then parked-§21.2 at zero, then base, then Ark, then SuperScalar), and only this spec exposes the trust/liquidity point as a per-user choice (base / parked / pure-leaf) rather than a fixed profile.
