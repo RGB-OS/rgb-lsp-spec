@@ -38,6 +38,7 @@
 25. [Changelog and findings disposition](#25-changelog-and-findings-disposition)
 - [Appendix A — Non-normative Q&A](#appendix-a--non-normative-qa)
 - [Appendix B — BTC instantiation (normative profile)](#appendix-b--btc-instantiation-normative-profile)
+- [Appendix C — Comparative analysis (non-normative)](#appendix-c--comparative-analysis-non-normative)
 
 ---
 
@@ -1261,3 +1262,47 @@ The output and key model (§7), ceremony (§8), epoch anatomy and capital model 
 ### B.6 Two-phase deployment path
 
 This profile exercises every novel component of the specification — ceremonies, trees, leaf channels, forfeits, capital management, committee mode — with zero dependence on the open research item. The intended sequencing for a USDT deployment is therefore: ship and audit the BTC profile first (the unconditional core), then upgrade the settled asset to canonical RGB-USDT when a D-VS instantiation passes R-1's acceptance criteria — at which point the audit increment is exactly §15 plus the asset halves of the formal companion's theorems, nothing else.
+
+---
+
+## Appendix C — Comparative analysis (non-normative)
+
+*Positioning against neighboring designs, for reviewers arriving from those literatures. Where constructions coincide, their published analysis transfers to the shared components — that transfer is a feature, cited deliberately (§10.6). This appendix ranks nothing; each design is optimal for its own product.*
+
+### C.1 SuperScalar
+
+The closest published relative. One-line relationship: **SuperScalar ≈ this specification's BTC profile (Appendix B) running in pure-leaf mode (§11.9) with §10.6 factories** — the same Bitcoin-layer skeleton, without the layers above it.
+
+**Shared skeleton (convergent, analysis transfers):**
+
+| Component | SuperScalar | This spec |
+|---|---|---|
+| Enforcement | pre-signed n-of-n tree, no covenants | §7 |
+| Recovery | timeout tree: `client ∨ LSP-after-timeout` | §7 expiry paths, `H_exp` |
+| Capital recycling | ladder of overlapping factories | overlapping cohorts (§9.3–9.4) |
+| Off-chain reallocation | Decker–Wattenhofer node updates | §10.6 (adopted, cited) |
+| User liveness | migrate before rung timeout | refresh-or-exit before `D_exit` |
+
+**Divergences:**
+
+1. **Leaves.** SuperScalar hosts *real* Lightning channels at leaves — routable and network-interoperable, at the price of force-closes that traverse the full DW delay stack and hence enormously inflated CLTV deltas. This spec forbids absolute-timeout HTLCs on leaves ([B-64]) and uses CSV mirrors (§11.8) plus a separate overlay for normal-delta traffic: faster contested settlement and a small vault timing budget, at the price of star topology. SuperScalar is the existence proof that [B-64]'s boundary is "unsound at *normal* deltas," not "impossible" — the two designs sit on opposite sides of that trade.
+2. **Asset layer.** SuperScalar is BTC-only; everything here about canonical RGB-USDT (D-VS/R-1, G2/T5 conservation, denominated payments) has no counterpart there — and no counterpart risk.
+3. **Credit/elasticity.** SuperScalar has no credit tier (receives require really-assigned liquidity) — exactly pure-leaf mode. The overlay's pending machinery with I3/I4 accounting is elasticity SuperScalar clients don't get at a trust cost they don't pay.
+4. **Offline users.** SuperScalar's timeout is unforgiving (miss the migration, lose to the LSP). This spec keeps non-participants' claims valid for the whole `W_exp` via forfeit-based partitioned epochs (§8–§9 — machinery SuperScalar lacks), and indefinitely under committee roll-forward (§21.2).
+5. **Resets and onboarding.** SuperScalar's only capacity reset is the next ladder rung; this spec adds mid-epoch branch rollover (§10.5), atomic onboarding (§9.5), and root-recycling full rollover ([B-62]).
+6. **Maturity — cuts both ways.** SuperScalar's core has more accumulated public adversarial analysis; this document has the specification layer (numbered requirements, conformance targets, formal companion with axioms/theorems/unproven residue) that SuperScalar does not attempt.
+
+### C.2 Ark
+
+Same construction class (the v0.1 review's framing): cosigned rounds, connector-bound forfeits, expiring claims. Capital obeys the same `min(T_reclaim, W_exp)/C` arithmetic — "Ark's ~10% overhead" is a dial setting available here too (§9.4). Divergences: covenant Ark cannot re-slice internal nodes (no key aggregate exists), and cosigned Ark gains little from it (transient random cohorts, cheap frequent rounds, and bare vtxos rather than capacity-bearing channels — nothing drains). Ark's out-of-round transfers push stale-state risk onto the *recipient* until the next round; this spec's mirrors absorb the equivalent risk at the *operator* (watch-equipped and compensated), making receives trustless within headroom — paid for by headroom capital that bare vtxos never need (§11.6).
+
+### C.3 Vanilla LSP and Specification A
+
+| Model | Capital | Trust for user funds |
+|---|---|---|
+| Specification A (federation custody) | ~1× + float | threshold federation controls redemption |
+| **This spec, rational dial** | ~1–2× TVL (→ ~1× with rollovers; ~0.1–0.5× blended with committee mode, §21.2) | none for settled (G1); 1-of-N for parked (G1′); capped credit for pending |
+| Ark class | same formula | none for in-round; recipient-side trust for oor |
+| Vanilla LSP (real asset channels) | ~1× of *capacity* ≈ 3–10× TVL at real utilization | none, immediately, per channel |
+
+Vanilla channels win only where capacity ≈ balances (saturated, static populations); the synthetic overlay exists precisely because inbound *capacity* — not realized balances — is what real capital utilization makes expensive (§4.4, §6.3).
